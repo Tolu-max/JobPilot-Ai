@@ -41,14 +41,21 @@ export async function startScheduler(argv = process.argv) {
   const baseConfig = buildConfig(argv);
   const profilesDir = path.join(baseConfig.rootDir, 'profiles');
 
-  const requestedProfile = resolveProfileNameArg(argv);
-  let profileNames = requestedProfile ? [requestedProfile] : ['tolu'];
-  if (!requestedProfile) {
+  const requestedProfiles = resolveProfileNamesArg(argv);
+  let profileNames = requestedProfiles.length ? requestedProfiles : [];
+  if (!requestedProfiles.length) {
     try {
       profileNames = fs.readdirSync(profilesDir).filter(p => !p.startsWith('.') && p !== 'example');
     } catch (err) {
-      console.warn('Could not read profiles dir, falling back to default.');
+      console.warn(`Could not read profiles dir: ${profilesDir}`);
     }
+  }
+
+  if (!profileNames.length) {
+    console.warn(`No runnable profiles found in ${profilesDir}.`);
+    console.warn('On Railway, upload profiles to /app/data/profiles or set PROFILES=tolu,sister after uploading the folders.');
+    keepProcessAlive();
+    return;
   }
 
   activeConfigs = profileNames.map(name => buildConfig([...argv, `--profile=${name}`]));
@@ -78,14 +85,31 @@ export async function startScheduler(argv = process.argv) {
   setInterval(runOnce, primaryConfig.schedulerIntervalMs);
 }
 
-function resolveProfileNameArg(argv) {
+function resolveProfileNamesArg(argv) {
+  const profilesInline = argv.find((arg) => arg.startsWith('--profiles='));
+  if (profilesInline) return splitProfileNames(profilesInline.split('=').slice(1).join('='));
+
+  const profilesIndex = argv.findIndex((arg) => arg === '--profiles');
+  if (profilesIndex >= 0 && argv[profilesIndex + 1]) return splitProfileNames(argv[profilesIndex + 1]);
+
   const inline = argv.find((arg) => arg.startsWith('--profile='));
-  if (inline) return inline.split('=').slice(1).join('=').trim();
+  if (inline) return splitProfileNames(inline.split('=').slice(1).join('='));
 
   const index = argv.findIndex((arg) => arg === '--profile');
-  if (index >= 0 && argv[index + 1]) return String(argv[index + 1]).trim();
+  if (index >= 0 && argv[index + 1]) return splitProfileNames(argv[index + 1]);
 
-  return '';
+  return splitProfileNames(process.env.PROFILES || process.env.PROFILE || '');
+}
+
+function splitProfileNames(value) {
+  return String(value || '')
+    .split(',')
+    .map((name) => name.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, ''))
+    .filter(Boolean);
+}
+
+function keepProcessAlive() {
+  setInterval(() => {}, 60 * 60 * 1000);
 }
 
 export function createSchedulerRunner(configs, runFn = runJobHunt) {
