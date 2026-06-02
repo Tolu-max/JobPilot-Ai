@@ -18,7 +18,8 @@ WORKDIR /app
 COPY package.json package-lock.json* ./
 # `npm ci` is strict about lockfiles; fall back if missing
 RUN if [ -f package-lock.json ]; then npm ci --omit=dev --ignore-scripts; \
-    else npm install --omit=dev --ignore-scripts; fi
+    else npm install --omit=dev --ignore-scripts; fi \
+    && npm rebuild better-sqlite3
 
 COPY . .
 
