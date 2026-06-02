@@ -1,0 +1,216 @@
+{
+  "bruntwork": {
+    "enabled": true,
+    "priority": 10,
+    "maxJobsPerRun": 50,
+    "cooldownMinutes": 1,
+    "autoApplyEnabled": true,
+    "timeoutMs": 1800000,
+    "jobsUrl": "https://bruntworkcareers.co/search"
+  },
+  "influx": {
+    "enabled": false,
+    "priority": 12,
+    "maxJobsPerRun": 25,
+    "cooldownMinutes": 1,
+    "autoApplyEnabled": false,
+    "timeoutMs": 120000,
+    "jobsUrl": "https://influx.com/careers/jobs",
+    "_disabled_reason": "Application flow requires a personal voice/audio recording upload"
+  },
+  "linkedin": {
+    "enabled": false,
+    "priority": 15,
+    "maxJobsPerRun": 20,
+    "cooldownMinutes": 1,
+    "autoApplyEnabled": false,
+    "timeoutMs": 120000,
+    "_disabled_reason": "Planned scraper; not implemented yet"
+  },
+  "indeed": {
+    "enabled": false,
+    "priority": 16,
+    "maxJobsPerRun": 30,
+    "cooldownMinutes": 1,
+    "autoApplyEnabled": true,
+    "timeoutMs": 60000
+  },
+  "glassdoor": {
+    "enabled": false,
+    "priority": 17,
+    "maxJobsPerRun": 20,
+    "cooldownMinutes": 1,
+    "autoApplyEnabled": false,
+    "timeoutMs": 60000,
+    "_disabled_reason": "Planned scraper; not implemented yet"
+  },
+  "wellfound": {
+    "enabled": false,
+    "priority": 20,
+    "maxJobsPerRun": 10,
+    "cooldownMinutes": 1,
+    "autoApplyEnabled": false
+  },
+  "weworkremotely": {
+    "enabled": false,
+    "priority": 30,
+    "maxJobsPerRun": 25,
+    "cooldownMinutes": 1,
+    "autoApplyEnabled": false,
+    "_disabled_reason": "Planned scraper; not implemented yet"
+  },
+  "remoteok": {
+    "enabled": true,
+    "priority": 40,
+    "maxJobsPerRun": 30,
+    "cooldownMinutes": 1,
+    "autoApplyEnabled": true
+  },
+  "workingnomads": {
+    "enabled": false,
+    "priority": 50,
+    "maxJobsPerRun": 15,
+    "cooldownMinutes": 1,
+    "autoApplyEnabled": false,
+    "_disabled_reason": "Planned scraper; not implemented yet"
+  },
+  "remoteco": {
+    "enabled": false,
+    "priority": 60,
+    "maxJobsPerRun": 10,
+    "cooldownMinutes": 1,
+    "autoApplyEnabled": false,
+    "_disabled_reason": "Returns 403 Forbidden"
+  },
+  "dailyremote": {
+    "enabled": false,
+    "priority": 70,
+    "maxJobsPerRun": 20,
+    "cooldownMinutes": 1,
+    "autoApplyEnabled": false,
+    "_disabled_reason": "Planned scraper; not implemented yet"
+  },
+  "remotive": {
+    "enabled": true,
+    "priority": 80,
+    "maxJobsPerRun": 30,
+    "cooldownMinutes": 1,
+    "autoApplyEnabled": true
+  },
+  "jobgether": {
+    "enabled": false,
+    "priority": 90,
+    "maxJobsPerRun": 20,
+    "cooldownMinutes": 1,
+    "autoApplyEnabled": false,
+    "_disabled_reason": "Planned scraper; not implemented yet"
+  },
+  "himalayas": {
+    "enabled": true,
+    "priority": 100,
+    "maxJobsPerRun": 20,
+    "cooldownMinutes": 1,
+    "autoApplyEnabled": true,
+    "timeoutMs": 180000
+  },
+  "dynamitejobs": {
+    "enabled": false,
+    "priority": 110,
+    "maxJobsPerRun": 20,
+    "cooldownMinutes": 1,
+    "autoApplyEnabled": false,
+    "_disabled_reason": "Planned scraper; not implemented yet"
+  },
+  "jobspresso": {
+    "enabled": false,
+    "priority": 120,
+    "maxJobsPerRun": 15,
+    "cooldownMinutes": 1,
+    "autoApplyEnabled": false,
+    "_disabled_reason": "RSS feed reachable but empty since 2026-05-13 (site appears dormant)"
+  },
+  "onlinejobsph": {
+    "enabled": false,
+    "priority": 130,
+    "maxJobsPerRun": 20,
+    "cooldownMinutes": 1,
+    "autoApplyEnabled": false,
+    "_disabled_reason": "Planned scraper; not implemented yet"
+  },
+  "jobberman": {
+    "enabled": true,
+    "priority": 140,
+    "maxJobsPerRun": 20,
+    "cooldownMinutes": 1,
+    "autoApplyEnabled": true
+  },
+  "myjobmag": {
+    "enabled": false,
+    "priority": 150,
+    "maxJobsPerRun": 20,
+    "cooldownMinutes": 1,
+    "autoApplyEnabled": false,
+    "_disabled_reason": "Planned scraper; not implemented yet"
+  },
+  "betternship": {
+    "enabled": false,
+    "priority": 160,
+    "maxJobsPerRun": 10,
+    "cooldownMinutes": 1,
+    "autoApplyEnabled": false
+  },
+  "arbeitnow": {
+    "enabled": false,
+    "priority": 170,
+    "maxJobsPerRun": 20,
+    "cooldownMinutes": 1,
+    "autoApplyEnabled": false,
+    "_disabled_reason": "Planned scraper; not implemented yet"
+  },
+  "themuse": {
+    "enabled": false,
+    "priority": 180,
+    "maxJobsPerRun": 20,
+    "cooldownMinutes": 1,
+    "autoApplyEnabled": false,
+    "_disabled_reason": "Planned scraper; not implemented yet"
+  },
+  "jobicy": {
+    "enabled": false,
+    "priority": 190,
+    "maxJobsPerRun": 20,
+    "cooldownMinutes": 1,
+    "autoApplyEnabled": false,
+    "_disabled_reason": "Planned scraper; not implemented yet"
+  },
+  "careernest": {
+    "enabled": false,
+    "priority": 200,
+    "maxJobsPerRun": 20,
+    "cooldownMinutes": 1,
+    "autoApplyEnabled": false,
+    "_disabled_reason": "Planned scraper; not implemented yet"
+  },
+  "remoteyeah": {
+    "enabled": false,
+    "priority": 210,
+    "maxJobsPerRun": 20,
+    "cooldownMinutes": 1,
+    "autoApplyEnabled": false,
+    "_disabled_reason": "Apply flow opens new tab to login page (remoteyeah.com/login?redirect_url=...) — site requires authenticated session to apply"
+  },
+  "remotejobsorg": {
+    "enabled": true,
+    "priority": 220,
+    "maxJobsPerRun": 20,
+    "cooldownMinutes": 1,
+    "autoApplyEnabled": true
+  },
+  "jobdataapi": {
+    "enabled": false,
+    "priority": 230,
+    "maxJobsPerRun": 20,
+    "cooldownMinutes": 1,
+    "autoApplyEnabled": true
+  }
+}

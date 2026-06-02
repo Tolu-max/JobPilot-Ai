@@ -1,0 +1,69 @@
+{
+  "name": "jobpilot-cli",
+  "version": "1.0.2",
+  "description": "Open-source local-first job automation CLI with optional dashboard sync",
+  "type": "module",
+  "main": "index.js",
+  "bin": {
+    "jobpilot": "./cli.js"
+  },
+  "keywords": [
+    "job",
+    "automation",
+    "ai",
+    "scraper",
+    "playwright",
+    "remote-jobs",
+    "job-hunt",
+    "gemini"
+  ],
+  "license": "MIT",
+  "scripts": {
+    "start": "node cli.js",
+    "run": "node cli.js run",
+    "dashboard": "node cli.js dashboard",
+    "review": "node cli.js review",
+    "scheduler": "node cli.js scheduler",
+    "doctor": "node cli.js doctor",
+    "test": "node --test test/*.js",
+    "test:browser": "node --test test/automationTestMode.test.js test/captchaSolver.test.js",
+    "test:scrapers:live": "node --test test-all-scrapers.js test-scrapers.js",
+    "scrapers:check": "node scripts/check-scrapers.mjs",
+    "scrapers:health": "node scripts/scrapers-health.mjs",
+    "himalayas:auth": "node scripts/check-himalayas-auth.mjs",
+    "release:check": "node scripts/release-check.mjs && npm run scrapers:check && npm test",
+    "start:all": "node src/scheduler.js",
+    "scheduler:all": "node src/scheduler.js",
+    "api": "node src/api/server.js",
+    "bot:start": "pm2 start ecosystem.config.cjs --update-env",
+    "bot:stop": "pm2 stop jobpilot-scheduler",
+    "bot:restart": "pm2 restart jobpilot-scheduler --update-env",
+    "bot:status": "pm2 list",
+    "bot:logs": "pm2 logs jobpilot-scheduler --lines 30",
+    "postinstall": "playwright install chromium"
+  },
+  "dependencies": {
+    "@clack/prompts": "^1.4.0",
+    "@google/genai": "^1.9.0",
+    "@supabase/supabase-js": "^2.49.4",
+    "better-sqlite3": "^12.10.0",
+    "dotenv": "^16.4.7",
+    "form-data": "^4.0.5",
+    "imap-simple": "^5.1.0",
+    "ink": "^5.2.1",
+    "mailparser": "^3.9.8",
+    "mammoth": "^1.12.0",
+    "ora": "^9.4.0",
+    "pdf-parse": "^2.4.5",
+    "pg": "^8.21.0",
+    "picocolors": "^1.1.1",
+    "playwright": "^1.49.1",
+    "pm2": "^6.0.14",
+    "proper-lockfile": "^4.1.2",
+    "react": "^18.3.1",
+    "tree-kill": "^1.2.2"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

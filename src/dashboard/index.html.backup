@@ -1,0 +1,778 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>JobPilot Dashboard</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <script src="https://unpkg.com/lucide@latest"></script>
+  <style>
+    :root {
+      --bg: #09090b;
+      --surface: rgba(25, 25, 30, 0.6);
+      --surface-hover: rgba(40, 40, 50, 0.8);
+      --border: rgba(255, 255, 255, 0.08);
+      --border-glow: rgba(99, 102, 241, 0.4);
+      --text: #f8fafc;
+      --muted: #94a3b8;
+      --accent: #6366f1;
+      --accent-grad: linear-gradient(135deg, #6366f1, #8b5cf6, #d946ef);
+      
+      --green: #22c55e;
+      --green-bg: rgba(34, 197, 94, 0.15);
+      --yellow: #f59e0b;
+      --yellow-bg: rgba(245, 158, 11, 0.15);
+      --red: #ef4444;
+      --red-bg: rgba(239, 68, 68, 0.15);
+      --blue: #3b82f6;
+      --blue-bg: rgba(59, 130, 246, 0.15);
+      
+      --card-r: 16px;
+      --font: 'Outfit', sans-serif;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: var(--font);
+      background-color: var(--bg);
+      color: var(--text);
+      font-size: 14px;
+      height: 100vh;
+      overflow: hidden;
+      background-image: 
+        radial-gradient(circle at 15% 50%, rgba(99, 102, 241, 0.08) 0%, transparent 50%),
+        radial-gradient(circle at 85% 30%, rgba(217, 70, 239, 0.05) 0%, transparent 50%);
+    }
+
+    a { color: var(--accent); text-decoration: none; }
+    
+    /* Layout */
+    .app { display: grid; grid-template-rows: 70px 1fr; height: 100vh; }
+
+    /* Header */
+    .header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 0 32px;
+      background: rgba(9, 9, 11, 0.8);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+      z-index: 100;
+    }
+    
+    .header-brand { display: flex; align-items: center; gap: 12px; }
+    .logo-box {
+      width: 36px; height: 36px;
+      border-radius: 10px;
+      background: var(--accent-grad);
+      display: flex; align-items: center; justify-content: center;
+      box-shadow: 0 0 20px rgba(99, 102, 241, 0.4);
+    }
+    .logo-box i { color: white; width: 20px; height: 20px; }
+    
+    .brand-text h1 { font-size: 18px; font-weight: 700; letter-spacing: -0.5px; }
+    .brand-text span { font-size: 12px; color: var(--muted); font-weight: 400; }
+    
+    .header-right { display: flex; align-items: center; gap: 20px; }
+    
+    /* Auth Pill */
+    .auth-pill {
+      display: flex; align-items: center; gap: 10px;
+      padding: 6px 14px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 30px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+    .auth-pill .user-email { color: var(--text); font-weight: 500; }
+    .auth-pill i { width: 14px; height: 14px; }
+    
+    .status-pill { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 500; color: var(--muted); }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 8px var(--green); animation: pulse 2s infinite; }
+    .dot.idle { background: var(--muted); box-shadow: none; animation: none; }
+    @keyframes pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.5; transform: scale(1.1); } }
+    
+    .btn {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 8px 16px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 13px;
+      font-family: var(--font);
+      font-weight: 500;
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      display: flex; align-items: center; gap: 6px;
+    }
+    .btn:hover { background: var(--surface-hover); border-color: var(--accent); box-shadow: 0 0 15px rgba(99, 102, 241, 0.15); }
+    .btn i { width: 16px; height: 16px; }
+
+    /* Main Area */
+    .main { display: grid; grid-template-columns: 280px 1fr; height: calc(100vh - 70px); overflow: hidden; }
+
+    /* Sidebar */
+    .sidebar {
+      background: rgba(15, 15, 20, 0.4);
+      backdrop-filter: blur(20px);
+      border-right: 1px solid var(--border);
+      padding: 24px 16px;
+      overflow-y: auto;
+      display: flex; flex-direction: column; gap: 32px;
+    }
+    .sidebar-section { display: flex; flex-direction: column; gap: 8px; }
+    .sidebar-label { font-size: 11px; font-weight: 600; letter-spacing: 1.5px; color: var(--muted); text-transform: uppercase; margin-bottom: 4px; padding-left: 12px; }
+    
+    .profile-tab {
+      display: flex; align-items: center; gap: 12px;
+      padding: 12px;
+      border-radius: 12px;
+      cursor: pointer;
+      border: 1px solid transparent;
+      transition: all 0.2s;
+    }
+    .profile-tab:hover { background: var(--surface); border-color: var(--border); }
+    .profile-tab.active { background: rgba(99, 102, 241, 0.1); border-color: var(--border-glow); }
+    .profile-avatar {
+      width: 36px; height: 36px; border-radius: 10px;
+      display: flex; align-items: center; justify-content: center;
+      font-weight: 600; font-size: 14px;
+    }
+    .profile-info { flex: 1; }
+    .profile-name { font-weight: 600; font-size: 14px; color: var(--text); margin-bottom: 2px; }
+    .profile-sub { font-size: 12px; color: var(--muted); }
+
+    .nav-item {
+      display: flex; align-items: center; gap: 12px;
+      padding: 10px 12px; border-radius: 10px;
+      cursor: pointer; font-size: 14px; font-weight: 500; color: var(--muted);
+      transition: all 0.2s;
+      border: 1px solid transparent;
+    }
+    .nav-item i { width: 18px; height: 18px; }
+    .nav-item:hover { background: var(--surface); color: var(--text); }
+    .nav-item.active { background: rgba(255, 255, 255, 0.05); border-color: var(--border); color: var(--text); box-shadow: 0 4px 12px rgba(0,0,0,0.2); }
+    
+    /* Content */
+    .content {
+      padding: 32px;
+      overflow-y: auto;
+      display: flex; flex-direction: column; gap: 32px;
+    }
+
+    /* Stats Grid */
+    .stats-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 20px; }
+    .stat-card {
+      background: var(--surface);
+      backdrop-filter: blur(10px);
+      border: 1px solid var(--border);
+      border-radius: var(--card-r);
+      padding: 24px;
+      display: flex; flex-direction: column; gap: 12px;
+      position: relative; overflow: hidden;
+      transition: transform 0.3s, box-shadow 0.3s, border-color 0.3s;
+    }
+    .stat-card:hover { transform: translateY(-4px); box-shadow: 0 12px 30px rgba(0,0,0,0.4); border-color: var(--border-glow); }
+    
+    .stat-card::before { content: ''; position: absolute; inset: 0; opacity: 0.05; transition: opacity 0.3s; pointer-events: none; }
+    .stat-card:hover::before { opacity: 0.15; }
+    .stat-card.green::before { background: radial-gradient(circle at top right, var(--green), transparent 70%); }
+    .stat-card.yellow::before { background: radial-gradient(circle at top right, var(--yellow), transparent 70%); }
+    .stat-card.blue::before { background: radial-gradient(circle at top right, var(--blue), transparent 70%); }
+    .stat-card.red::before { background: radial-gradient(circle at top right, var(--red), transparent 70%); }
+    .stat-card.purple::before { background: radial-gradient(circle at top right, var(--accent), transparent 70%); }
+
+    .stat-header { display: flex; align-items: center; justify-content: space-between; }
+    .stat-icon { width: 36px; height: 36px; border-radius: 10px; display: flex; align-items: center; justify-content: center; }
+    .stat-icon i { width: 20px; height: 20px; }
+    
+    .stat-value { font-size: 36px; font-weight: 700; line-height: 1; letter-spacing: -1px; }
+    .stat-label { font-size: 13px; color: var(--muted); font-weight: 500; }
+    
+    /* Colorful Accents for Stat Cards */
+    .stat-card.green .stat-icon { background: var(--green-bg); color: var(--green); }
+    .stat-card.yellow .stat-icon { background: var(--yellow-bg); color: var(--yellow); }
+    .stat-card.blue .stat-icon { background: var(--blue-bg); color: var(--blue); }
+    .stat-card.red .stat-icon { background: var(--red-bg); color: var(--red); }
+    .stat-card.purple .stat-icon { background: rgba(99,102,241,0.15); color: var(--accent); }
+
+    .section-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+    .section-title { font-size: 20px; font-weight: 600; letter-spacing: -0.5px; }
+    
+    /* Table */
+    .glass-panel {
+      background: var(--surface);
+      backdrop-filter: blur(12px);
+      border: 1px solid var(--border);
+      border-radius: var(--card-r);
+      overflow: hidden;
+    }
+    
+    .job-table-head {
+      display: grid; grid-template-columns: 2fr 1.5fr 1fr 1fr 1.5fr 1fr; gap: 16px;
+      padding: 16px 24px;
+      border-bottom: 1px solid var(--border);
+      font-size: 12px; font-weight: 600; letter-spacing: 1px; color: var(--muted); text-transform: uppercase;
+      background: rgba(0,0,0,0.2);
+    }
+    .job-row {
+      display: grid; grid-template-columns: 2fr 1.5fr 1fr 1fr 1.5fr 1fr; gap: 16px;
+      padding: 16px 24px;
+      border-bottom: 1px solid rgba(255,255,255,0.04);
+      align-items: center;
+      transition: background 0.2s;
+    }
+    .job-row:last-child { border-bottom: none; }
+    .job-row:hover { background: rgba(255,255,255,0.03); }
+    
+    .job-title-cell .job-title { font-size: 14px; font-weight: 600; color: var(--text); display: block; margin-bottom: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 90%; }
+    .job-title-cell .job-company { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); }
+    .job-company i { width: 12px; height: 12px; }
+    
+    .badge { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 20px; font-size: 12px; font-weight: 500; }
+    .badge-source { background: rgba(255,255,255,0.05); border: 1px solid var(--border); color: var(--muted); }
+    
+    .score-bar-wrap { display: flex; align-items: center; gap: 10px; }
+    .score-val { font-size: 13px; font-weight: 600; width: 28px; }
+    .score-bar { flex: 1; height: 6px; background: rgba(255,255,255,0.05); border-radius: 6px; overflow: hidden; }
+    .score-fill { height: 100%; border-radius: 6px; }
+    
+    .status-applied { background: var(--green-bg); color: var(--green); border: 1px solid rgba(34,197,94,0.3); }
+    .status-reviewed { background: var(--yellow-bg); color: var(--yellow); border: 1px solid rgba(245,158,11,0.3); }
+    .status-pending { background: var(--blue-bg); color: var(--blue); border: 1px solid rgba(59,130,246,0.3); }
+    .status-failed { background: var(--red-bg); color: var(--red); border: 1px solid rgba(239,68,68,0.3); }
+    .status-ignored { background: rgba(255,255,255,0.05); color: var(--muted); border: 1px solid var(--border); }
+    
+    .job-actions { display: flex; gap: 8px; }
+    .action-icon-btn {
+      width: 32px; height: 32px; border-radius: 8px;
+      display: flex; align-items: center; justify-content: center;
+      border: 1px solid transparent; cursor: pointer; transition: all 0.2s;
+    }
+    .action-icon-btn i { width: 16px; height: 16px; }
+    .btn-approve { background: var(--green-bg); color: var(--green); }
+    .btn-approve:hover { background: rgba(34,197,94,0.25); border-color: rgba(34,197,94,0.5); }
+    .btn-reject { background: var(--red-bg); color: var(--red); }
+    .btn-reject:hover { background: rgba(239,68,68,0.25); border-color: rgba(239,68,68,0.5); }
+    .btn-link { background: rgba(255,255,255,0.05); color: var(--muted); }
+    .btn-link:hover { color: var(--text); border-color: var(--border); }
+    
+    .empty-state { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 80px 20px; color: var(--muted); }
+    .empty-icon { width: 64px; height: 64px; border-radius: 50%; background: rgba(255,255,255,0.03); display: flex; align-items: center; justify-content: center; margin-bottom: 16px; }
+    .empty-icon i { width: 32px; height: 32px; opacity: 0.5; }
+    .empty-state p { font-size: 15px; font-weight: 500; }
+
+    /* Logs */
+    .log-container { padding: 16px; font-family: 'Courier New', monospace; font-size: 13px; max-height: 300px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
+    .log-line { display: flex; gap: 12px; line-height: 1.5; color: #cbd5e1; }
+    .log-ts { color: var(--muted); white-space: nowrap; }
+    .log-line.applied { color: var(--green); }
+    .log-line.failed { color: var(--red); }
+    .log-line.queued { color: var(--yellow); }
+    .log-line.run { color: var(--accent); }
+
+    .event-list { padding: 16px; display: grid; gap: 10px; max-height: 260px; overflow-y: auto; }
+    .event-row { display: grid; grid-template-columns: 160px 180px 1fr; gap: 12px; align-items: center; color: #cbd5e1; font-size: 13px; }
+    .event-type { color: var(--accent); font-weight: 600; }
+    .event-time { color: var(--muted); }
+    .event-data { color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    /* Pagination */
+    .pagination { display: flex; align-items: center; justify-content: center; gap: 16px; padding: 24px 0; }
+    
+    /* Toast */
+    #toast { position: fixed; bottom: 32px; right: 32px; background: rgba(15, 15, 20, 0.9); backdrop-filter: blur(12px); border: 1px solid var(--border); border-radius: 12px; padding: 16px 24px; font-size: 14px; font-weight: 500; box-shadow: 0 10px 40px rgba(0,0,0,0.5); transform: translateY(100px) scale(0.9); opacity: 0; transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275); z-index: 1000; display: flex; align-items: center; gap: 12px; }
+    #toast.show { transform: translateY(0) scale(1); opacity: 1; }
+    #toast.ok i { color: var(--green); }
+    #toast.err i { color: var(--red); }
+    #toast i { width: 20px; height: 20px; }
+
+  </style>
+</head>
+<body>
+<div class="app" id="app">
+
+  <header class="header">
+    <div class="header-brand">
+      <div class="logo-box"><i data-lucide="bot"></i></div>
+      <div class="brand-text">
+        <h1>JobPilot</h1>
+        <span>Automated Job Hunter</span>
+      </div>
+    </div>
+    
+    <div class="header-right">
+      <div class="auth-pill" id="auth-info" style="display:none;">
+        <i data-lucide="user"></i>
+        <span class="user-email" id="auth-email">Loading...</span>
+      </div>
+      <div class="status-pill">
+        <span class="dot" id="dot"></span>
+        <span id="status-text">Live</span>
+      </div>
+      <button class="btn" onclick="loadAll()">
+        <i data-lucide="refresh-cw"></i> Refresh
+      </button>
+    </div>
+  </header>
+
+  <div class="main">
+    <aside class="sidebar">
+      
+      <div class="sidebar-section">
+        <div class="sidebar-label">Profiles</div>
+        <div id="profile-list">
+          <div class="profile-tab active" data-profile="all" onclick="selectProfile(this, null)">
+            <div class="profile-avatar" style="background: var(--accent-grad)">
+              <i data-lucide="users" style="color:white;width:18px;height:18px;"></i>
+            </div>
+            <div class="profile-info">
+              <div class="profile-name">All Profiles</div>
+              <div class="profile-sub" id="all-sub">Loading...</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="sidebar-section">
+        <div class="sidebar-label">Job Status</div>
+        <div class="nav-item active" onclick="selectStatus(this, '')">
+          <i data-lucide="layout-grid"></i> All Jobs
+        </div>
+        <div class="nav-item" onclick="selectStatus(this, 'reviewed')">
+          <i data-lucide="inbox"></i> Pending Review
+        </div>
+        <div class="nav-item" onclick="selectStatus(this, 'manual_review')">
+          <i data-lucide="alert-circle"></i> Manual Review
+        </div>
+        <div class="nav-item" onclick="selectStatus(this, 'pending_apply')">
+          <i data-lucide="clock"></i> Queued to Apply
+        </div>
+        <div class="nav-item" onclick="selectStatus(this, 'applied')">
+          <i data-lucide="check-circle-2"></i> Applied
+        </div>
+        <div class="nav-item" onclick="selectStatus(this, 'failed')">
+          <i data-lucide="x-circle"></i> Failed
+        </div>
+        <div class="nav-item" onclick="selectStatus(this, 'ignored')">
+          <i data-lucide="archive"></i> Ignored
+        </div>
+      </div>
+
+    </aside>
+
+    <main class="content">
+      
+      <div class="stats-grid">
+        <div class="stat-card purple">
+          <div class="stat-header">
+            <div class="stat-icon"><i data-lucide="briefcase"></i></div>
+          </div>
+          <div>
+            <div class="stat-value" id="s-total">-</div>
+            <div class="stat-label">Total Processed</div>
+          </div>
+        </div>
+        <div class="stat-card green">
+          <div class="stat-header">
+            <div class="stat-icon"><i data-lucide="check-circle-2"></i></div>
+          </div>
+          <div>
+            <div class="stat-value" id="s-applied">-</div>
+            <div class="stat-label">Successfully Applied</div>
+          </div>
+        </div>
+        <div class="stat-card yellow">
+          <div class="stat-header">
+            <div class="stat-icon"><i data-lucide="inbox"></i></div>
+          </div>
+          <div>
+            <div class="stat-value" id="s-reviewed">-</div>
+            <div class="stat-label">Pending Review</div>
+          </div>
+        </div>
+        <div class="stat-card blue">
+          <div class="stat-header">
+            <div class="stat-icon"><i data-lucide="clock"></i></div>
+          </div>
+          <div>
+            <div class="stat-value" id="s-pending">-</div>
+            <div class="stat-label">Queued to Apply</div>
+          </div>
+        </div>
+        <div class="stat-card red">
+          <div class="stat-header">
+            <div class="stat-icon"><i data-lucide="x-circle"></i></div>
+          </div>
+          <div>
+            <div class="stat-value" id="s-failed">-</div>
+            <div class="stat-label">Failed</div>
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <div class="section-head">
+          <h2 class="section-title">Job Applications</h2>
+          <button class="btn" onclick="approveAllVisible()" style="border-color: rgba(34,197,94,0.3); color: var(--green);">
+            <i data-lucide="check-square"></i> Approve All Pending
+          </button>
+        </div>
+        
+        <div class="glass-panel">
+          <div class="job-table-head">
+            <span>Job Role</span>
+            <span>Platform</span>
+            <span>Match Score</span>
+            <span>Profile</span>
+            <span>Status</span>
+            <span>Actions</span>
+          </div>
+          <div id="job-list">
+            <div class="empty-state">
+              <div class="empty-icon"><i data-lucide="loader-2" class="lucide-spin"></i></div>
+              <p>Loading jobs...</p>
+            </div>
+          </div>
+        </div>
+        
+        <div class="pagination" id="pagination"></div>
+      </div>
+
+      <div>
+        <div class="section-head">
+          <h2 class="section-title">System Logs</h2>
+        </div>
+        <div class="glass-panel log-container" id="log-entries">
+          <div class="log-line">Loading logs...</div>
+        </div>
+      </div>
+
+      <div>
+        <div class="section-head">
+          <h2 class="section-title">Recent Events</h2>
+        </div>
+        <div class="glass-panel event-list" id="event-entries">
+          <div class="event-row"><span class="event-time">Loading events...</span></div>
+        </div>
+      </div>
+
+    </main>
+  </div>
+</div>
+
+<div id="toast">
+  <i data-lucide="info"></i>
+  <span id="toast-msg"></span>
+</div>
+
+<script>
+  lucide.createIcons();
+
+  let currentProfile = null;
+  let currentStatus = '';
+  let currentPage = 1;
+  let totalPages = 1;
+
+  window.addEventListener('DOMContentLoaded', () => {
+    loadAll();
+    loadAuth();
+    setInterval(loadAll, 30000); 
+  });
+
+  async function loadAuth() {
+    try {
+      const res = await fetch('/api/auth');
+      if (res.ok) {
+        const data = await res.json();
+        if (data.auth && data.auth.user) {
+          const authPill = document.getElementById('auth-info');
+          authPill.style.display = 'flex';
+          document.getElementById('auth-email').textContent = data.auth.user.email || 'Authenticated User';
+        }
+      }
+    } catch(e) { console.error('Auth load failed', e); }
+  }
+
+  async function loadAll() {
+    await Promise.all([loadStats(), loadJobs(), loadLogs(), loadEvents()]);
+  }
+
+  async function loadStats() {
+    try {
+      const res = await fetch('/api/stats');
+      if (!res.ok) throw new Error();
+      const data = await res.json();
+      
+      const t = data.totals;
+      document.getElementById('s-total').textContent = t.total;
+      document.getElementById('s-applied').textContent = t.applied;
+      document.getElementById('s-reviewed').textContent = t.reviewed;
+      document.getElementById('s-pending').textContent = t.pending_apply;
+      document.getElementById('s-failed').textContent = t.failed;
+      
+      document.getElementById('status-text').textContent = 'Online';
+      document.getElementById('dot').classList.remove('idle');
+
+      renderSidebar(data.profiles);
+    } catch {
+      document.getElementById('status-text').textContent = 'Offline';
+      document.getElementById('dot').classList.add('idle');
+    }
+  }
+
+  function renderSidebar(profiles) {
+    const list = document.getElementById('profile-list');
+    const allTab = list.children[0];
+    list.innerHTML = '';
+    list.appendChild(allTab);
+
+    const colors = ['#6366f1', '#f59e0b', '#22c55e', '#ec4899'];
+
+    profiles.forEach((p, i) => {
+      const initials = (p.profile || 'P').slice(0, 2).toUpperCase();
+      const color = colors[i % colors.length];
+      const isActive = currentProfile === p.profile;
+      
+      const div = document.createElement('div');
+      div.className = 'profile-tab' + (isActive ? ' active' : '');
+      div.setAttribute('data-profile', p.profile);
+      div.onclick = () => selectProfile(div, p.profile);
+      
+      div.innerHTML = `
+        <div class="profile-avatar" style="background: rgba(${hexToRgb(color)}, 0.15); color: ${color}; border: 1px solid rgba(${hexToRgb(color)}, 0.3);">
+          ${initials}
+        </div>
+        <div class="profile-info">
+          <div class="profile-name">${esc(p.profile)}</div>
+          <div class="profile-sub">${p.total} processed</div>
+        </div>
+      `;
+      list.appendChild(div);
+    });
+
+    const tot = profiles.reduce((s, p) => s + p.total, 0);
+    document.getElementById('all-sub').textContent = `${tot} total jobs`;
+  }
+
+  function hexToRgb(hex) {
+    var result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
+    return result ? `${parseInt(result[1], 16)}, ${parseInt(result[2], 16)}, ${parseInt(result[3], 16)}` : '255,255,255';
+  }
+
+  async function loadJobs() {
+    const params = new URLSearchParams({ page: currentPage, limit: 50 });
+    if (currentProfile) params.set('profile', currentProfile);
+    if (currentStatus) params.set('status', currentStatus);
+
+    try {
+      const res = await fetch('/api/jobs?' + params);
+      const data = await res.json();
+      renderJobs(data.items || []);
+      renderPagination(data.page, data.pages, data.total);
+      lucide.createIcons();
+    } catch {
+      document.getElementById('job-list').innerHTML = '<div class="empty-state"><div class="empty-icon"><i data-lucide="alert-triangle"></i></div><p>Failed to load jobs</p></div>';
+      lucide.createIcons();
+    }
+  }
+
+  function renderJobs(jobs) {
+    const el = document.getElementById('job-list');
+    if (jobs.length === 0) {
+      el.innerHTML = '<div class="empty-state"><div class="empty-icon"><i data-lucide="search-x"></i></div><p>No jobs found</p></div>';
+      return;
+    }
+    
+    el.innerHTML = jobs.map(job => {
+      const score = job.score || 0;
+      const scoreColor = score >= 80 ? 'var(--green)' : score >= 60 ? 'var(--yellow)' : 'var(--red)';
+      const canAction = ['reviewed', 'pending_apply', 'failed', 'manual_review'].includes(job.status);
+      const url = job.job_url || job.applicationUrl || '';
+      
+      let statusClass = 'status-ignored';
+      let statusIcon = 'archive';
+      let statusLabelStr = 'Ignored';
+      
+      switch(job.status) {
+        case 'applied': statusClass = 'status-applied'; statusIcon = 'check-circle-2'; statusLabelStr = 'Applied'; break;
+        case 'reviewed': statusClass = 'status-reviewed'; statusIcon = 'inbox'; statusLabelStr = 'Review'; break;
+        case 'manual_review': statusClass = 'status-reviewed'; statusIcon = 'inbox'; statusLabelStr = 'Manual Review'; break;
+        case 'pending_apply': statusClass = 'status-pending'; statusIcon = 'clock'; statusLabelStr = 'Queued'; break;
+        case 'failed': statusClass = 'status-failed'; statusIcon = 'x-circle'; statusLabelStr = 'Failed'; break;
+      }
+      
+      return `
+      <div class="job-row" data-hash="${esc(job.job_hash)}" data-profile="${esc(job._profile)}">
+        <div class="job-title-cell">
+          <a class="job-title" href="${url}" target="_blank" title="${esc(job.title)}">${esc(job.title)}</a>
+          <div class="job-company"><i data-lucide="building-2"></i> ${esc(job.company)}</div>
+        </div>
+        <div><span class="badge badge-source">${esc(job.source_site)}</span></div>
+        <div>
+          <div class="score-bar-wrap">
+            <span class="score-val" style="color:${scoreColor}">${score}</span>
+            <div class="score-bar"><div class="score-fill" style="width:${score}%;background:${scoreColor}"></div></div>
+          </div>
+        </div>
+        <div style="font-size:13px; font-weight:500; color:var(--text)">${esc(job._profile)}</div>
+        <div>
+          <span class="badge ${statusClass}"><i data-lucide="${statusIcon}"></i> ${statusLabelStr}</span>
+        </div>
+        <div class="job-actions">
+          ${canAction ? `
+            <button class="action-icon-btn btn-approve" onclick="approve(this)" title="Approve">
+              <i data-lucide="check"></i>
+            </button>
+            <button class="action-icon-btn btn-reject" onclick="reject(this)" title="Cancel">
+              <i data-lucide="x"></i>
+            </button>
+          ` : ''}
+          ${url ? `<a class="action-icon-btn btn-link" href="${url}" target="_blank" title="View Job"><i data-lucide="external-link"></i></a>` : ''}
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  function renderPagination(page, pages, total) {
+    const el = document.getElementById('pagination');
+    if (pages <= 1) { el.innerHTML = ''; return; }
+    el.innerHTML = `
+      <button class="btn" ${page <= 1 ? 'disabled' : ''} onclick="goPage(${page-1})"><i data-lucide="chevron-left"></i> Prev</button>
+      <span style="font-size:13px; color:var(--muted)">Page ${page} of ${pages} (${total} jobs)</span>
+      <button class="btn" ${page >= pages ? 'disabled' : ''} onclick="goPage(${page+1})">Next <i data-lucide="chevron-right"></i></button>
+    `;
+    lucide.createIcons();
+  }
+
+  async function loadLogs() {
+    const params = new URLSearchParams();
+    if (currentProfile) params.set('profile', currentProfile);
+    try {
+      const res = await fetch('/api/logs?' + params);
+      const data = await res.json();
+      const el = document.getElementById('log-entries');
+      if (data.lines.length === 0) { el.innerHTML = '<div class="log-line" style="color:var(--muted)">No logs yet.</div>'; return; }
+      
+      el.innerHTML = data.lines.slice().reverse().map(line => {
+        let cls = '';
+        if (/APPLIED/i.test(line)) cls = 'applied';
+        else if (/FAILED|error/i.test(line)) cls = 'failed';
+        else if (/Queued|review/i.test(line)) cls = 'queued';
+        else if (/Run started|Run finished|Scheduler/i.test(line)) cls = 'run';
+        
+        const m = line.match(/^\[(\d{4}-\d{2}-\d{2}T[\d:.Z]+)\]\s*(.*)/);
+        if (m) {
+          const ts = new Date(m[1]).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit', second:'2-digit'});
+          return `<div class="log-line ${cls}"><span class="log-ts">[${ts}]</span><span>${esc(m[2])}</span></div>`;
+        }
+        return `<div class="log-line ${cls}">${esc(line)}</div>`;
+      }).join('');
+    } catch {}
+  }
+
+  async function loadEvents() {
+    const params = new URLSearchParams({ limit: 30 });
+    if (currentProfile) params.set('profile', currentProfile);
+    try {
+      const res = await fetch('/api/events?' + params);
+      const data = await res.json();
+      const events = data.events || [];
+      const el = document.getElementById('event-entries');
+      if (events.length === 0) {
+        el.innerHTML = '<div class="event-row"><span class="event-data">No events yet.</span></div>';
+        return;
+      }
+      el.innerHTML = events.slice().reverse().map((event) => {
+        const time = event.timestamp ? new Date(event.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '';
+        const data = event.data || {};
+        const label = [data.title, data.company, data.status].filter(Boolean).join(' - ') || data.message || event.source || '';
+        return `
+          <div class="event-row">
+            <span class="event-time">${esc(time)}</span>
+            <span class="event-type">${esc(event.type)}</span>
+            <span class="event-data" title="${esc(label)}">${esc(label)}</span>
+          </div>
+        `;
+      }).join('');
+    } catch {}
+  }
+
+  async function approve(btn) {
+    const row = btn.closest('.job-row');
+    const hash = row?.dataset.hash || '';
+    const profile = row?.dataset.profile || '';
+    btn.disabled = true;
+    try {
+      const res = await fetch(`/api/approve/${encodeURIComponent(hash)}?profile=${encodeURIComponent(profile)}`, { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) { showToast('Approved job application', 'ok'); loadJobs(); loadStats(); }
+      else showToast(data.error || 'Failed to approve', 'err');
+    } catch { showToast('Request failed', 'err'); }
+  }
+
+  async function reject(btn) {
+    const row = btn.closest('.job-row');
+    const hash = row?.dataset.hash || '';
+    const profile = row?.dataset.profile || '';
+    btn.disabled = true;
+    try {
+      const res = await fetch(`/api/cancel/${encodeURIComponent(hash)}?profile=${encodeURIComponent(profile)}`, { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) { showToast('Cancelled job', 'ok'); loadJobs(); loadStats(); }
+      else showToast(data.error || 'Failed to cancel', 'err');
+    } catch { showToast('Request failed', 'err'); }
+  }
+
+  async function approveAllVisible() {
+    const rows = document.querySelectorAll('.job-row[data-hash]');
+    const toApprove = Array.from(rows).filter(r => r.querySelector('.btn-approve'));
+    if (!toApprove.length) return showToast('No pending jobs visible', 'err');
+    if (!confirm(`Approve ${toApprove.length} job(s) for auto-application?`)) return;
+    
+    for (const row of toApprove) {
+      const hash = row.dataset.hash;
+      const profile = row.dataset.profile || '';
+      await fetch(`/api/approve/${encodeURIComponent(hash)}?profile=${encodeURIComponent(profile)}`, { method: 'POST' }).catch(()=>{});
+    }
+    showToast(`Approved ${toApprove.length} jobs`, 'ok');
+    loadJobs(); loadStats();
+  }
+
+  function selectProfile(el, profile) {
+    document.querySelectorAll('.profile-tab').forEach(t => t.classList.remove('active'));
+    el.classList.add('active');
+    currentProfile = profile;
+    currentPage = 1;
+    loadJobs(); loadLogs(); loadEvents();
+  }
+
+  function selectStatus(el, status) {
+    document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+    el.classList.add('active');
+    currentStatus = status;
+    currentPage = 1;
+    loadJobs();
+  }
+
+  function goPage(page) { currentPage = page; loadJobs(); }
+
+  function esc(str) {
+    return String(str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  let toastTimer;
+  function showToast(msg, type = 'ok') {
+    const t = document.getElementById('toast');
+    document.getElementById('toast-msg').textContent = msg;
+    t.querySelector('i').setAttribute('data-lucide', type === 'ok' ? 'check-circle' : 'alert-circle');
+    lucide.createIcons();
+    t.className = `show ${type}`;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => t.className = '', 3500);
+  }
+</script>
+</body>
+</html>

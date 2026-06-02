@@ -1,0 +1,23 @@
+# Railway deploy config - JobPilot private runner
+# Docs: https://docs.railway.com/guides/config-as-code
+
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+# Default mode: always-on scheduler.
+# For lower credit usage, configure Railway cron/scheduled jobs to run:
+#   node scripts/run-all-profiles-once.mjs
+startCommand = "node cli.js scheduler"
+
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10
+
+# Background worker only. Do not expose this private runner publicly.
+
+# Persistent volume. The Docker entrypoint links profiles, logs, review queues,
+# debug artifacts, browser profiles, and test results into /app/data.
+[[volumes]]
+mountPath = "/app/data"
+name = "jobpilot-data"

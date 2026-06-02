@@ -1,0 +1,33 @@
+# Render blueprint — JobPilot scheduler
+# Docs: https://render.com/docs/blueprint-spec
+
+services:
+  - type: worker                       # background worker (no HTTP port)
+    name: jobpilot-scheduler
+    runtime: docker
+    plan: starter                      # 0.5 CPU / 512MB; bump to "standard" for Playwright headroom
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: TZ
+        value: UTC
+      - key: JOBPILOT_REQUIRE_AUTH
+        value: "false"
+      - key: SCHEDULER_INTERVAL_MS
+        value: "14400000"              # 4 hours
+      # Secrets — set these in the Render dashboard, NOT here:
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: CAPSOLVER_API_KEY
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+    disk:
+      name: jobpilot-data
+      mountPath: /app/data
+      sizeGB: 1

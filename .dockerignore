@@ -1,0 +1,40 @@
+node_modules
+npm-debug.log
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+
+# Local state — provided by the host's persistent volume at runtime
+data
+logs
+profiles/sister
+profiles/tolu
+
+# Build / dev cruft
+.vscode
+.idea
+.DS_Store
+*.log
+debug
+audit
+review
+test-artifacts
+test-report
+test-results
+browser-profile
+browser-profiles
+chrome-extension
+node_modules
+
+# Large local files
+*.pdf
+*.m4a
+Influx.m4a
+
+# Don't ship the website source — it lives at pxxl.app
+website
+
+# Compose / hosting metadata isn't needed inside the image
+docker-compose*.yml
