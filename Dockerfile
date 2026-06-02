@@ -24,9 +24,6 @@ COPY . .
 
 RUN chmod +x ./scripts/railway-entrypoint.sh
 
-# Persist these on the host volume (Railway: volume, Render: disk)
-VOLUME ["/app/data", "/app/profiles", "/app/logs"]
-
 ENTRYPOINT ["./scripts/railway-entrypoint.sh"]
 
 # Default = the long-running scheduler. Override with:
