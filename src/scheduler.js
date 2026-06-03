@@ -85,6 +85,10 @@ export async function startScheduler(argv = process.argv) {
   const runOnce = createSchedulerRunner(activeConfigs);
 
   await runOnce();
+  if (shouldRunOnceAndExit()) {
+    await appendLog('Scheduler run-once mode complete; exiting.', primaryConfig);
+    return;
+  }
   setInterval(runOnce, primaryConfig.schedulerIntervalMs);
 }
 
@@ -166,6 +170,10 @@ function scheduleDailySummary(config) {
 
 function isLocalDashboardEnabled() {
   return ['1', 'true', 'yes', 'on'].includes(String(process.env.JOBPILOT_LOCAL_DASHBOARD || '').toLowerCase());
+}
+
+function shouldRunOnceAndExit() {
+  return ['1', 'true', 'yes', 'on'].includes(String(process.env.RUN_ONCE_AND_EXIT || process.env.SCHEDULER_RUN_ONCE || '').toLowerCase());
 }
 
 process.on('uncaughtException', async (error) => {

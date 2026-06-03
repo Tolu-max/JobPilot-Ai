@@ -202,11 +202,13 @@ export async function runJobHunt(config, options = {}) {
             gemini,
             optimizer
           });
-          await sendReviewNotification(job, optimizer.application_score, config);
+          await appendLog(`Queued for review: ${job.title} (${optimizer.application_score}) - ${autoApplyGate.reason}`, config);
+          await sendReviewNotification({ ...job, reviewReason: autoApplyGate.reason }, optimizer.application_score, config);
         } else if (hasAutoApplyLimit && autoApplyAttempts >= config.maxAutoApplyPerRun) {
+          const limitReason = 'Auto-apply run limit reached. Awaiting user approval.';
           row.status = 'pending';
           runSummary.jobsQueuedForReview += 1;
-          await addReviewJob(job, analysis, 'Auto-apply run limit reached. Awaiting user approval.', config);
+          await addReviewJob(job, analysis, limitReason, config);
           await recordJobStatus(config, job, 'reviewed', {
             score: optimizer.application_score,
             decision,
@@ -214,7 +216,8 @@ export async function runJobHunt(config, options = {}) {
             gemini,
             optimizer
           });
-          await sendReviewNotification(job, optimizer.application_score, config);
+          await appendLog(`Queued for review: ${job.title} (${optimizer.application_score}) - ${limitReason}`, config);
+          await sendReviewNotification({ ...job, reviewReason: limitReason }, optimizer.application_score, config);
         } else {
           autoApplyAttempts += 1;
           runSummary.jobsAutoApplyAttempts += 1;
@@ -266,9 +269,10 @@ export async function runJobHunt(config, options = {}) {
           await appendLog(`${row.status.toUpperCase()}: ${job.title} - ${applyResult.reason}`, config);
         }
       } else if (decision === 'review') {
+        const reviewReason = reviewReasonForOptimizer(optimizer);
         row.status = 'pending';
         runSummary.jobsQueuedForReview += 1;
-        await addReviewJob(job, analysis, reviewReasonForOptimizer(optimizer), config);
+        await addReviewJob(job, analysis, reviewReason, config);
         await recordJobStatus(config, job, 'reviewed', {
           score: optimizer.application_score,
           decision,
@@ -276,9 +280,9 @@ export async function runJobHunt(config, options = {}) {
           gemini,
           optimizer
         });
-        await sendReviewNotification(job, optimizer.application_score, config);
+        await sendReviewNotification({ ...job, reviewReason }, optimizer.application_score, config);
         await updateProfileLearning(config, { job, status: 'reviewed', score: optimizer.application_score });
-        await appendLog(`Queued for review: ${job.title} (${optimizer.application_score})`, config);
+        await appendLog(`Queued for review: ${job.title} (${optimizer.application_score}) - ${reviewReason}`, config);
       } else {
         runSummary.jobsIgnored += 1;
         await recordJobStatus(config, job, 'ignored', {
@@ -315,7 +319,7 @@ export async function runJobHunt(config, options = {}) {
   return results;
 }
 
-async function flushPendingApplyQueue(config) {
+export async function flushPendingApplyQueue(config) {
   // Auto-apply queue flushing re-enabled after successful BruntWork pipeline test (2026-05-30)
 
   const store = await loadJobStore(config);

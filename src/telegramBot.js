@@ -105,7 +105,11 @@ export async function sendReviewNotification(job, score, config) {
   const jobHash = job.job_hash || job.hash || hashJob(job) || '';
   const company = job.company ? ` @ ${job.company}` : '';
   const url = job.applicationUrl || job.job_url || '';
-  const desc = truncateDescription(job.description || job.raw?.description || '');
+  const reviewReason = job.reviewReason || job.review_reason || '';
+  const desc = truncateDescription([
+    reviewReason ? `Reason: ${reviewReason}` : '',
+    job.description || job.raw?.description || ''
+  ].filter(Boolean).join('\n\n'));
 
   const text = [
     `📋 *Review Required* \\[${escapeMarkdown(profilePrefix)}\\]`,

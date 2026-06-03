@@ -77,6 +77,15 @@ export const COMMANDS = Object.freeze([
     load: async () => (await import('./resetJobs.js')).cmdResetJobs
   },
   {
+    name: 'apply-pending',
+    category: 'Run',
+    summary: 'Apply Telegram-approved jobs now',
+    aliases: ['flush-pending'],
+    usage: 'jobpilot apply-pending --profile=<name>',
+    profileAware: true,
+    load: async () => (await import('./applyPending.js')).cmdApplyPending
+  },
+  {
     name: 'dashboard',
     category: 'Monitor',
     summary: 'Local terminal dashboard',
