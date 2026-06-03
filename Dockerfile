@@ -14,6 +14,10 @@ ENV NODE_ENV=production \
 
 WORKDIR /app
 
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends unzip \
+    && rm -rf /var/lib/apt/lists/*
+
 # Install deps first to maximise Docker layer caching
 COPY package.json package-lock.json* ./
 # `npm ci` is strict about lockfiles; fall back if missing

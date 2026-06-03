@@ -30,6 +30,7 @@ import { startTelegramPolling, sendDailySummary } from './telegramBot.js';
 import { startDashboardServer } from './dashboardServer.js';
 import { pruneAiCache } from './aiRouter.js';
 import { checkEmailResponses } from './responseTracker.js';
+import { bootstrapProfilesFromEnv } from './profileBundleBootstrap.js';
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -38,6 +39,8 @@ let running = false;
 let activeConfigs = [];
 
 export async function startScheduler(argv = process.argv) {
+  await bootstrapProfilesFromEnv();
+
   const baseConfig = buildConfig(argv);
   const profilesDir = path.join(baseConfig.rootDir, 'profiles');
 

@@ -78,4 +78,6 @@ for profile in ${PROFILES:-}; do
   done
 done
 
+export JOBPILOT_PROFILE_BOOTSTRAPPED=1
+
 exec "$@"
