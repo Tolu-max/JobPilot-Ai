@@ -1488,11 +1488,17 @@ Question on the application form: "${cleanQuestion}"
 
 Write a concise, specific answer (1-3 sentences):`;
 
-  // Try Groq first, then Gemini, then OpenRouter
   const providers = [];
-  if (groqKey) providers.push({ url: 'https://api.groq.com/openai/v1/chat/completions', key: groqKey, model: 'llama-3.3-70b-versatile' });
-  if (geminiKey) providers.push({ url: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', key: geminiKey, model: 'gemini-2.5-flash-lite' });
-  if (openRouterKey) providers.push({ url: 'https://openrouter.ai/api/v1/chat/completions', key: openRouterKey, model: 'nvidia/nemotron-3-super-120b-a12b:free' });
+  if (groqKey && !isAiProviderDisabled('groq', config)) {
+    providers.push({ provider: 'groq', url: 'https://api.groq.com/openai/v1/chat/completions', key: groqKey, model: config.groqModel || process.env.GROQ_MODEL || 'llama-3.3-70b-versatile' });
+  }
+  if (geminiKey && !isAiProviderDisabled('gemini', config)) {
+    providers.push({ provider: 'gemini', url: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', key: geminiKey, model: config.geminiModel || process.env.GEMINI_MODEL || 'gemini-2.5-flash-lite' });
+  }
+  if (openRouterKey && !isAiProviderDisabled('openrouter', config)) {
+    providers.push({ provider: 'openrouter', url: 'https://openrouter.ai/api/v1/chat/completions', key: openRouterKey, model: config.openRouterModel || process.env.OPENROUTER_MODEL || 'nvidia/nemotron-3-super-120b-a12b:free' });
+  }
+  prioritizeAiAnswerProviders(providers, config.aiProvider || process.env.AI_PROVIDER || process.env.AI_LAYER);
 
   for (const provider of providers) {
     try {
@@ -1543,6 +1549,25 @@ Write a concise, specific answer (1-3 sentences):`;
   }
 
   return null;
+}
+
+function isAiProviderDisabled(provider, config = {}) {
+  const disabled = config.aiDisabledProviders || process.env.AI_DISABLED_PROVIDERS || process.env.DISABLED_AI_PROVIDERS || '';
+  return String(disabled)
+    .split(',')
+    .map((item) => item.trim().toLowerCase())
+    .filter(Boolean)
+    .includes(String(provider || '').toLowerCase());
+}
+
+function prioritizeAiAnswerProviders(providers, preferredProvider) {
+  const preferred = String(preferredProvider || '').trim().toLowerCase();
+  if (!preferred) return;
+  providers.sort((left, right) => {
+    if (left.provider === preferred && right.provider !== preferred) return -1;
+    if (right.provider === preferred && left.provider !== preferred) return 1;
+    return 0;
+  });
 }
 
 async function fillKnownQuestionAnswers(page, applicationAnswers, config, job) {

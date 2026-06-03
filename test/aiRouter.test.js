@@ -42,6 +42,25 @@ test('aiRouter mock mode can simulate fallback routing', async () => {
   assert.equal(result.fallbackUsed, true);
 });
 
+test('aiRouter can prefer Groq and disable Gemini', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ai-router-'));
+  const result = await aiRouter.request({
+    taskType: TaskTypes.APPLICATION_WRITING,
+    prompt: 'Return JSON',
+    profile: { profileName: 'tolu' },
+    jobData: { title: 'SEO Specialist', applicationUrl: 'https://example.com/job', localScore: 92 },
+    config: {
+      aiMode: 'MOCK',
+      rootDir: dir,
+      profileName: 'tolu',
+      aiProvider: 'groq',
+      aiDisabledProviders: 'gemini'
+    }
+  });
+
+  assert.match(result.modelUsed, /^groq:/);
+});
+
 test('aiRouter skips verification AI below local score threshold', async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ai-router-'));
   const result = await aiRouter.request({

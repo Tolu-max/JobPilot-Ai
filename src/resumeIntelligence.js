@@ -3,6 +3,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import mammoth from 'mammoth';
 import * as pdfParseModule from 'pdf-parse';
+import aiRouter, { TaskTypes, hasAvailableAiProvider } from './aiRouter.js';
 
 const PDFParse = pdfParseModule.PDFParse
   || pdfParseModule.default
@@ -33,7 +34,7 @@ export async function extractResumeIntelligence(resumePath, config = {}) {
 
   let aiProfile = null;
   if (shouldUseAi(config, extraction.text)) {
-    aiProfile = await structureResumeWithGemini(extraction.text, config).catch(() => null);
+    aiProfile = await structureResumeWithAi(extraction.text, config).catch(() => null);
   }
 
   return {
@@ -118,27 +119,22 @@ export function structureResumeLocally(text = '') {
 function shouldUseAi(config, text) {
   if (config.aiMode === 'MOCK') return false;
   if (!text || text.length < 200) return false;
-  return Boolean(config.geminiApiKey || process.env.GEMINI_API_KEY);
+  return hasAvailableAiProvider(config);
 }
 
-async function structureResumeWithGemini(text, config) {
-  const apiKey = config.geminiApiKey || process.env.GEMINI_API_KEY;
-  const model = config.geminiModel || process.env.GEMINI_MODEL || 'gemini-2.5-flash-lite';
+async function structureResumeWithAi(text, config) {
   const prompt = `Return only valid JSON. Structure this resume text into candidate data with keys: name, email, phone, location, linkedin, github, website, jobTitle, summary, yearsOfExperience, skills, industries, strengths, weaknesses, workHistory, education, certifications, languages.\n\nResume:\n${text.slice(0, 18000)}`;
 
-  const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      contents: [{ parts: [{ text: prompt }] }],
-      generationConfig: { temperature: 0.1, maxOutputTokens: 1800 }
-    })
+  const routed = await aiRouter.request({
+    taskType: TaskTypes.FALLBACK_REASONING,
+    prompt,
+    profile: { profileName: config.profileName },
+    jobData: { title: 'Resume structure', localScore: 90 },
+    fallbackLevel: 'resume-intelligence',
+    config
   });
 
-  if (!res.ok) throw new Error(`Gemini resume structure HTTP ${res.status}`);
-  const data = await res.json();
-  const output = (data.candidates?.[0]?.content?.parts?.[0]?.text || '').trim();
-  return parseJsonFromText(output);
+  return parseJsonFromText(routed.response);
 }
 
 function mergeProfiles(localProfile, aiProfile) {

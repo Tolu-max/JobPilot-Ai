@@ -1,6 +1,6 @@
 import imaps from 'imap-simple';
 import { simpleParser } from 'mailparser';
-import { GoogleGenAI } from '@google/genai';
+import aiRouter, { TaskTypes, hasAvailableAiProvider } from './aiRouter.js';
 import { loadJobStore, upsertJobRecord } from './jobStore.js';
 import { appendLog } from './logger.js';
 
@@ -56,8 +56,11 @@ export async function checkEmailResponses(config) {
       return;
     }
 
-    const ai = new GoogleGenAI({ apiKey: config.geminiApiKey });
-    const model = ai.models.generateContent.bind(ai.models);
+    if (!hasAvailableAiProvider(config)) {
+      await appendLog('ResponseTracker: No available AI provider configured. Skipping email analysis.', config);
+      connection.end();
+      return;
+    }
 
     for (const msg of messages) {
       const all = msg.parts.find((part) => part.which === 'TEXT');
@@ -105,12 +108,16 @@ export async function checkEmailResponses(config) {
         `;
 
         try {
-          const response = await model({
-            model: config.geminiModel || 'gemini-2.5-flash',
-            contents: [{ role: 'user', parts: [{ text: prompt }] }]
+          const routed = await aiRouter.request({
+            taskType: TaskTypes.FALLBACK_REASONING,
+            prompt,
+            profile: { profileName: config.profileName },
+            jobData: { title: matchingJob.title, company: matchingJob.company, localScore: 90 },
+            fallbackLevel: 'response-tracker',
+            config
           });
 
-          const raw = response.text || '';
+          const raw = routed.response || '';
           const match = raw.match(/\{[\s\S]*\}/);
           if (match) {
             const parsed = JSON.parse(match[0]);

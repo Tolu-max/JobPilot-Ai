@@ -21,6 +21,7 @@ import { sendReviewNotification, resetReviewNotifCount, sendOverflowSummary } fr
 import { withRetry } from './retry.js';
 import { runScrapers } from './scrapers/index.js';
 import { optimizeApplication, saveOptimizerArtifacts } from './applicationOptimizer.js';
+import { hasAvailableAiProvider } from './aiRouter.js';
 import { syncJobApplicationsBatch } from './jobApplicationSync.js';
 import { syncJobApplicationsToSQLite } from './sqliteSync.js';
 import { pullDashboardApprovals } from './dashboardSync.js';
@@ -160,7 +161,7 @@ export async function runJobHunt(config, options = {}) {
       });
 
       // AI-Powered Resume & Cover Letter Tailoring
-      if (optimizer.application_score > 85 && (config.geminiApiKey || process.env.GEMINI_API_KEY)) {
+      if (optimizer.application_score > 85 && hasAvailableAiProvider(config)) {
         try {
           const { tailorResumeAndCoverLetter } = await import('./resumeTailor.js');
           const jobContext = `${job.description || ''} ${job.requirements || ''}`;
@@ -170,7 +171,7 @@ export async function runJobHunt(config, options = {}) {
             jobContext,
             resumeText,
             config.profileDir,
-            config.geminiApiKey || process.env.GEMINI_API_KEY
+            config
           );
           if (tailored) {
             optimizer.optimized_cover_letter = tailored.coverLetterText;

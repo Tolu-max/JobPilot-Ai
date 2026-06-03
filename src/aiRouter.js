@@ -24,29 +24,29 @@ export const TaskTypes = Object.freeze({
 
 const ROUTES = {
   [TaskTypes.FAST_FILTER]: [
-    { provider: 'openrouter', model: 'meta-llama/llama-3.3-70b-instruct', costLevel: 'free' },
-    { provider: 'groq', model: 'llama-3.3-70b-versatile', costLevel: 'low' },
-    { provider: 'gemini', model: 'gemini-2.0-flash', costLevel: 'medium' }
+    { provider: 'openrouter', modelFromConfig: 'openRouterModel', defaultModel: 'meta-llama/llama-3.3-70b-instruct', costLevel: 'free' },
+    { provider: 'groq', modelFromConfig: 'groqModel', defaultModel: 'llama-3.3-70b-versatile', costLevel: 'low' },
+    { provider: 'gemini', modelFromConfig: 'geminiModel', defaultModel: 'gemini-2.0-flash', costLevel: 'medium' }
   ],
   [TaskTypes.APPLICATION_WRITING]: [
-    { provider: 'groq', model: 'llama-3.3-70b-versatile', costLevel: 'medium' },
-    { provider: 'gemini', model: 'gemini-2.0-flash', costLevel: 'medium' },
-    { provider: 'openrouter', model: 'meta-llama/llama-3.3-70b-instruct', costLevel: 'free' }
+    { provider: 'groq', modelFromConfig: 'groqModel', defaultModel: 'llama-3.3-70b-versatile', costLevel: 'medium' },
+    { provider: 'gemini', modelFromConfig: 'geminiModel', defaultModel: 'gemini-2.0-flash', costLevel: 'medium' },
+    { provider: 'openrouter', modelFromConfig: 'openRouterModel', defaultModel: 'meta-llama/llama-3.3-70b-instruct', costLevel: 'free' }
   ],
   [TaskTypes.JOB_VERIFICATION]: [
-    { provider: 'groq', model: 'llama-3.3-70b-versatile', costLevel: 'low' },
-    { provider: 'gemini', model: 'gemini-2.0-flash', costLevel: 'medium' },
-    { provider: 'openrouter', model: 'meta-llama/llama-3.3-70b-instruct', costLevel: 'free' }
+    { provider: 'groq', modelFromConfig: 'groqModel', defaultModel: 'llama-3.3-70b-versatile', costLevel: 'low' },
+    { provider: 'gemini', modelFromConfig: 'geminiModel', defaultModel: 'gemini-2.0-flash', costLevel: 'medium' },
+    { provider: 'openrouter', modelFromConfig: 'openRouterModel', defaultModel: 'meta-llama/llama-3.3-70b-instruct', costLevel: 'free' }
   ],
   [TaskTypes.HIGH_VALUE_APPLICATION]: [
-    { provider: 'groq', model: 'llama-3.3-70b-versatile', costLevel: 'medium' },
-    { provider: 'gemini', model: 'gemini-2.0-flash', costLevel: 'medium' },
-    { provider: 'openrouter', model: 'meta-llama/llama-3.3-70b-instruct', costLevel: 'free' }
+    { provider: 'groq', modelFromConfig: 'groqModel', defaultModel: 'llama-3.3-70b-versatile', costLevel: 'medium' },
+    { provider: 'gemini', modelFromConfig: 'geminiModel', defaultModel: 'gemini-2.0-flash', costLevel: 'medium' },
+    { provider: 'openrouter', modelFromConfig: 'openRouterModel', defaultModel: 'meta-llama/llama-3.3-70b-instruct', costLevel: 'free' }
   ],
   [TaskTypes.FALLBACK_REASONING]: [
-    { provider: 'groq', model: 'llama-3.3-70b-versatile', costLevel: 'low' },
-    { provider: 'gemini', model: 'gemini-2.0-flash', costLevel: 'medium' },
-    { provider: 'openrouter', model: 'meta-llama/llama-3.3-70b-instruct', costLevel: 'free' }
+    { provider: 'groq', modelFromConfig: 'groqModel', defaultModel: 'llama-3.3-70b-versatile', costLevel: 'low' },
+    { provider: 'gemini', modelFromConfig: 'geminiModel', defaultModel: 'gemini-2.0-flash', costLevel: 'medium' },
+    { provider: 'openrouter', modelFromConfig: 'openRouterModel', defaultModel: 'meta-llama/llama-3.3-70b-instruct', costLevel: 'free' }
   ]
 };
 
@@ -57,7 +57,7 @@ export async function request({ taskType, prompt, profile = {}, jobData = {}, fa
   const localScore = Number.parseInt(jobData.localScore ?? jobData.local_score ?? jobData.score, 10);
   const cachePath = resolveCachePath(config);
   const cacheKey = buildCacheKey({ normalizedTaskType, prompt, profileName, jobData });
-  const route = routeFor(normalizedTaskType, localScore);
+  const route = routeFor(normalizedTaskType, localScore, config);
 
   if (isMockAiMode(config)) {
     return simulateMockRouting({
@@ -106,7 +106,7 @@ export async function request({ taskType, prompt, profile = {}, jobData = {}, fa
   const failures = [];
 
   for (const target of route) {
-    const model = target.modelFromConfig ? config[target.modelFromConfig] || target.defaultModel : target.model;
+    const model = modelForTarget(target, config);
     if (!hasProviderKey(target.provider, config)) {
       failures.push(`${target.provider}/${model}: missing API key`);
       continue;
@@ -228,11 +228,25 @@ async function callOpenAiCompatible(endpoint, apiKey, model, prompt, extraHeader
   return String(payload.choices?.[0]?.message?.content || '').trim();
 }
 
-function routeFor(taskType, localScore) {
-  if (taskType === TaskTypes.HIGH_VALUE_APPLICATION && localScore >= 90) {
-    return ROUTES[TaskTypes.HIGH_VALUE_APPLICATION];
-  }
-  return ROUTES[taskType] || ROUTES[TaskTypes.FALLBACK_REASONING];
+function routeFor(taskType, localScore, config = {}) {
+  const baseRoute = taskType === TaskTypes.HIGH_VALUE_APPLICATION && localScore >= 90
+    ? ROUTES[TaskTypes.HIGH_VALUE_APPLICATION]
+    : ROUTES[taskType] || ROUTES[TaskTypes.FALLBACK_REASONING];
+
+  return prioritizeProvider(baseRoute, config.aiProvider || process.env.AI_PROVIDER || process.env.AI_LAYER);
+}
+
+function prioritizeProvider(route, preferredProvider) {
+  const preferred = String(preferredProvider || '').trim().toLowerCase();
+  if (!preferred || !['gemini', 'groq', 'openrouter'].includes(preferred)) return route;
+  return [
+    ...route.filter((target) => target.provider === preferred),
+    ...route.filter((target) => target.provider !== preferred)
+  ];
+}
+
+function modelForTarget(target, config = {}) {
+  return target.modelFromConfig ? config[target.modelFromConfig] || target.defaultModel : target.model;
 }
 
 async function simulateMockRouting({
@@ -248,7 +262,7 @@ async function simulateMockRouting({
   const failures = [];
 
   for (const target of route) {
-    const model = target.modelFromConfig ? config[target.modelFromConfig] || target.defaultModel : target.model;
+    const model = modelForTarget(target, config);
     const modelUsed = `${target.provider}:${model}`;
     const forcedFailure = shouldForceMockFailure(config, target.provider, model);
     const latencyMs = Date.now() - startedAt;
@@ -315,10 +329,24 @@ async function simulateMockRouting({
 }
 
 function hasProviderKey(provider, config) {
+  if (isProviderDisabled(provider, config)) return false;
   if (provider === 'gemini') return Boolean(config.geminiApiKey);
   if (provider === 'groq') return Boolean(config.groqApiKey);
   if (provider === 'openrouter') return Boolean(config.openRouterApiKey);
   return false;
+}
+
+export function hasAvailableAiProvider(config = {}) {
+  return ['groq', 'openrouter', 'gemini'].some((provider) => hasProviderKey(provider, config));
+}
+
+function isProviderDisabled(provider, config = {}) {
+  const disabled = config.aiDisabledProviders || process.env.AI_DISABLED_PROVIDERS || process.env.DISABLED_AI_PROVIDERS || '';
+  return String(disabled)
+    .split(',')
+    .map((item) => item.trim().toLowerCase())
+    .filter(Boolean)
+    .includes(String(provider || '').toLowerCase());
 }
 
 function normalizeTaskType(taskType) {
