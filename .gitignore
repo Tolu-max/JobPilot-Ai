@@ -51,4 +51,6 @@ run-sequential.mjs
 debug-bruntwork-form.js
 test-captcha-single.mjs
 test-job-scoring.mjs
+railway-profiles-upload/
+railway-profiles-upload.zip
 .DS_Store

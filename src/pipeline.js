@@ -36,6 +36,12 @@ export async function runJobHunt(config, options = {}) {
     await appendLog(`CV data loaded for ${config.profileName}: ${cvData.name || 'unknown'} | phone: ${cvData.phone ? '✓' : '✗'} | linkedin: ${cvData.linkedin ? '✓' : '✗'}`, config);
   }
   const resumeText = await readResumeText(config.resumePath);
+  if (!resumeText.trim() && config.autoApply && !config.resumePlaceholder) {
+    const message = `Resume text missing for ${config.profileName}. Check resumePath: ${config.resumePath}. Skipping this profile run to avoid low-quality scoring or applications.`;
+    await appendLog(message, config);
+    console.warn(`[pipeline] ${message}`);
+    return [];
+  }
   await pullDashboardApprovals(config);
   await flushPendingApplyQueue(config);
   const scrapeResult = await withRetry(() => runScrapers(config), { retries: 1, delayMs: 5000 });
