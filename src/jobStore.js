@@ -47,6 +47,45 @@ export async function saveGlobalJobStore(config, store) {
   await fs.writeFile(config.globalJobStorePath, `${JSON.stringify(store, null, 2)}\n`, 'utf8');
 }
 
+export async function resetProcessedJobs(config, options = {}) {
+  await ensureFileExists(config.jobStorePath);
+  let release = () => {};
+  try {
+    release = await lockfile.lock(config.jobStorePath, { retries: 5, stale: 10000 });
+    const store = await loadJobStore(config);
+    const before = Array.isArray(store.jobs) ? store.jobs.length : 0;
+    const removed = [];
+    const kept = [];
+
+    for (const record of store.jobs || []) {
+      if (shouldResetRecord(record, options)) removed.push(record);
+      else kept.push(record);
+    }
+
+    await saveJobStore(config, {
+      ...store,
+      jobs: kept,
+      resetHistory: [
+        ...(Array.isArray(store.resetHistory) ? store.resetHistory.slice(-9) : []),
+        {
+          resetAt: new Date().toISOString(),
+          profile: config.profileName || 'default',
+          mode: options.allNonApplied ? 'all-non-applied' : 'retryable',
+          removed: removed.length,
+          kept: kept.length
+        }
+      ]
+    });
+
+    return { before, after: kept.length, removed: removed.length, kept: kept.length };
+  } catch (error) {
+    console.error(`[jobStore] Lock error on ${config.jobStorePath}:`, error.message);
+    throw error;
+  } finally {
+    await release();
+  }
+}
+
 export async function getJobRecord(config, job) {
   const store = await loadJobStore(config);
   const jobHash = hashJob(job);
@@ -169,6 +208,24 @@ export function shouldSkipProcessed(record) {
     return retries >= 3;
   }
   return false;
+}
+
+function shouldResetRecord(record, options = {}) {
+  if (!record) return false;
+  if (record.status === 'applied') return false;
+  if (options.allNonApplied) return true;
+
+  const retryableStatuses = new Set(['ignored', 'reviewed', 'failed', 'manual_review']);
+  if (retryableStatuses.has(record.status)) return true;
+
+  const reason = [
+    record.reason,
+    record.local?.reasons,
+    record.gemini?.reasoning,
+    record.aiAnalysis?.reasoning,
+    record.analysis?.reasoning
+  ].flat().filter(Boolean).join(' ');
+  return /ai.*fail|provider.*fail|fallback|quota|resource_exhausted|no skill grounding/i.test(reason);
 }
 
 export function shouldSkipGlobalProcessed(record, config) {

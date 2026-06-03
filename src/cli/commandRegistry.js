@@ -68,6 +68,15 @@ export const COMMANDS = Object.freeze([
     load: async () => (await import('./review.js')).cmdReview
   },
   {
+    name: 'reset-jobs',
+    category: 'Run',
+    summary: 'Reprocess non-applied jobs',
+    aliases: ['retry-jobs', 'retry-failed-ai'],
+    usage: 'jobpilot reset-jobs --profile=<name> [--all-non-applied]',
+    profileAware: true,
+    load: async () => (await import('./resetJobs.js')).cmdResetJobs
+  },
+  {
     name: 'dashboard',
     category: 'Monitor',
     summary: 'Local terminal dashboard',
