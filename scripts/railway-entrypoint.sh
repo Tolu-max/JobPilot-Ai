@@ -20,6 +20,8 @@ if [ -n "${PROFILE_BUNDLE_URL:-}" ]; then
   rm -f /tmp/jobpilot-profile-bundle
   echo "[bootstrap] Done. Profiles found:"
   ls /app/data/profiles/ 2>/dev/null || echo "  (none - check bundle structure)"
+else
+  echo "[bootstrap] PROFILE_BUNDLE_URL is not set; using existing Railway volume profiles."
 fi
 
 # Railway mounts volumes at runtime. JobPilot writes state to repo-relative
