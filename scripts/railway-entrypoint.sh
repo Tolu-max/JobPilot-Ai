@@ -1,4 +1,16 @@
 #!/usr/bin/env bash
+# ── Profile bootstrap ────────────────────────────────────────────────────────
+if [ -n "${PROFILE_BUNDLE_URL}" ]; then
+  echo "[bootstrap] Downloading profiles bundle..."
+  mkdir -p /app/data
+  curl -L "${PROFILE_BUNDLE_URL}" -o /tmp/profiles.zip
+  unzip -o /tmp/profiles.zip -d /app/data/
+  rm -f /tmp/profiles.zip
+  echo "[bootstrap] Done. Profiles found:"
+  ls /app/data/profiles/ 2>/dev/null || echo "  (none — check zip structure)"
+fi
+# ────────────────────────────────────────────────────────────────────────────
+
 set -euo pipefail
 
 # Railway mounts volumes at runtime. JobPilot writes state to repo-relative
