@@ -11,6 +11,24 @@ if (!url || !outputPath) {
 
 await download(url, outputPath);
 
+const stat = fs.statSync(outputPath);
+const header = Buffer.alloc(16);
+const fd = fs.openSync(outputPath, 'r');
+fs.readSync(fd, header, 0, header.length, 0);
+fs.closeSync(fd);
+
+const firstBytes = [...header].map((byte) => byte.toString(16).padStart(2, '0')).join(' ');
+console.log(`[bootstrap] Downloaded profile bundle (${stat.size} bytes, first bytes: ${firstBytes}).`);
+
+if (stat.size < 128) {
+  throw new Error('Downloaded profile bundle is too small. Check PROFILE_BUNDLE_URL access permissions.');
+}
+
+const startsWithHtml = header.toString('utf8').trimStart().startsWith('<');
+if (startsWithHtml) {
+  throw new Error('Downloaded profile bundle looks like HTML, not an archive. Google Drive may be returning a preview/login page; use a direct download link or another file host.');
+}
+
 function download(targetUrl, filePath, redirects = 0) {
   if (redirects > 5) {
     return Promise.reject(new Error('Too many redirects while downloading profile bundle.'));
