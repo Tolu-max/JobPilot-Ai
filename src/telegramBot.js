@@ -685,11 +685,13 @@ async function findJobByHash(config, jobHash) {
 }
 
 function findProfileConfig(profileName, allConfigs) {
+  if (!profileName) return null;
   if (!Array.isArray(allConfigs)) return null;
+  const normalizedProfile = String(profileName).toLowerCase();
   return allConfigs.find((c) =>
     [c.displayName, c.profileName, profileCallbackKey(c)]
       .filter(Boolean)
-      .some((value) => String(value).toLowerCase() === profileName.toLowerCase())
+      .some((value) => String(value).toLowerCase() === normalizedProfile)
   );
 }
 
