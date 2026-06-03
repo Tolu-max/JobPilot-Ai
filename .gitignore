@@ -53,4 +53,5 @@ test-captcha-single.mjs
 test-job-scoring.mjs
 railway-profiles-upload/
 railway-profiles-upload.zip
+railway-profiles-upload.tar.gz
 .DS_Store

@@ -1,17 +1,26 @@
 #!/usr/bin/env bash
-# ── Profile bootstrap ────────────────────────────────────────────────────────
-if [ -n "${PROFILE_BUNDLE_URL}" ]; then
+set -euo pipefail
+
+if [ -n "${PROFILE_BUNDLE_URL:-}" ]; then
   echo "[bootstrap] Downloading profiles bundle..."
   mkdir -p /app/data
-  curl -L "${PROFILE_BUNDLE_URL}" -o /tmp/profiles.zip
-  unzip -o /tmp/profiles.zip -d /app/data/
-  rm -f /tmp/profiles.zip
-  echo "[bootstrap] Done. Profiles found:"
-  ls /app/data/profiles/ 2>/dev/null || echo "  (none — check zip structure)"
-fi
-# ────────────────────────────────────────────────────────────────────────────
+  node ./scripts/download-profile-bundle.mjs "${PROFILE_BUNDLE_URL}" /tmp/jobpilot-profile-bundle
 
-set -euo pipefail
+  format="${PROFILE_BUNDLE_FORMAT:-tar.gz}"
+  if [ "$format" = "zip" ]; then
+    if ! command -v unzip >/dev/null 2>&1; then
+      echo "[bootstrap] unzip is not installed. Use a tar.gz bundle or set PROFILE_BUNDLE_FORMAT=tar.gz."
+      exit 1
+    fi
+    unzip -o /tmp/jobpilot-profile-bundle -d /app/data/
+  else
+    tar -xzf /tmp/jobpilot-profile-bundle -C /app/data/
+  fi
+
+  rm -f /tmp/jobpilot-profile-bundle
+  echo "[bootstrap] Done. Profiles found:"
+  ls /app/data/profiles/ 2>/dev/null || echo "  (none - check bundle structure)"
+fi
 
 # Railway mounts volumes at runtime. JobPilot writes state to repo-relative
 # paths, so link those paths into the /app/data volume before the runner starts.
