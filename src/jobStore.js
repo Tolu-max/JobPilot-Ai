@@ -121,9 +121,14 @@ export async function upsertJobRecord(config, job, status, details = {}) {
     };
 
     if (existingIndex >= 0) {
-      store.jobs[existingIndex] = { ...store.jobs[existingIndex], ...record };
+      const prev = store.jobs[existingIndex];
+      const retryStates = ['failed', 'manual_review'];
+      const retryCount = retryStates.includes(prev.status) && retryStates.includes(status)
+        ? (prev.retryCount || 0) + 1
+        : (prev.retryCount || 0);
+      store.jobs[existingIndex] = { ...prev, ...record, retryCount };
     } else {
-      store.jobs.push({ ...record, createdAt: new Date().toISOString() });
+      store.jobs.push({ ...record, retryCount: 0, createdAt: new Date().toISOString() });
     }
 
     await saveJobStore(config, store);
