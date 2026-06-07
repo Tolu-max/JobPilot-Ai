@@ -63,7 +63,17 @@ export function cleanApplicationAnswer(value) {
     .replace(/^\s*\d+[.)]\s+/gm, '')
     .replace(UNSUPPORTED_PREAMBLE_PATTERN, '')
     .replace(/^["']|["']$/g, '')
-    .replace(/\s+[\u2013\u2014-]\s+/g, ' ')
+    // Em/en dashes (\u2014 \u2013) are a strong "AI-written" tell. Convert every one to a
+    // comma \u2014 this covers both spaced " \u2014 " and tight "word\u2014word" \u2014 then tidy up
+    // the punctuation. ASCII hyphens inside compound words (co-worker, full-time)
+    // are deliberately left intact; only space-padded hyphens are collapsed.
+    .replace(/\s*[\u2013\u2014]+\s*/g, ', ')
+    .replace(/\s+-\s+/g, ' ')
+    .replace(/\s*,\s*,+/g, ', ')        // collapse commas from adjacent dashes
+    .replace(/([.,;:!?])\s*,/g, '$1')   // drop comma right after other punctuation
+    .replace(/,\s*([.,;:!?])/g, '$1')   // drop comma right before other punctuation
+    .replace(/\s+([,.;:!?])/g, '$1')    // no space before punctuation
+    .replace(/^\s*,\s*/, '')            // no leading comma
     .replace(/\s+/g, ' ')
     .trim();
 

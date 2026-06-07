@@ -18,6 +18,33 @@ const groundedConfig = {
   }
 };
 
+test('application answer guard strips em/en dashes that signal AI authorship', () => {
+  // spaced em-dash
+  assert.equal(
+    cleanApplicationAnswer('I am reliable — and I learn quickly.'),
+    'I am reliable, and I learn quickly.'
+  );
+  // tight em-dash (no surrounding spaces)
+  assert.equal(
+    cleanApplicationAnswer('Yes—I have handled that before.'),
+    'Yes, I have handled that before.'
+  );
+  // en-dash
+  assert.equal(
+    cleanApplicationAnswer('My focus is delivery – on time and in full.'),
+    'My focus is delivery, on time and in full.'
+  );
+  // multiple dashes in one sentence, no doubled commas or dashes left
+  const cleaned = cleanApplicationAnswer('Strong skills — communication, teamwork — and reliability.');
+  assert.equal(cleaned, 'Strong skills, communication, teamwork, and reliability.');
+  assert.doesNotMatch(cleaned, /[–—]/);
+  // ASCII hyphens inside compound words are preserved
+  assert.equal(
+    cleanApplicationAnswer('I am a detail-oriented, full-time co-worker.'),
+    'I am a detail-oriented, full-time co-worker.'
+  );
+});
+
 test('application answer guard extracts plain answer text from JSON AI output', () => {
   const answer = cleanApplicationAnswer('{"answer":"I have handled customer support through email and live chat."}');
 
