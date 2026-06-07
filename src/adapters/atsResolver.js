@@ -1,3 +1,5 @@
+import { emitEvent, EventTypes } from '../eventBus.js';
+
 const PLATFORM_RULES = [
   {
     adapter: 'greenhouse',
@@ -169,4 +171,29 @@ function normalizeApplyUrl(value) {
   } catch {
     return url;
   }
+}
+
+// Telemetry: record what a gateway job (remoteok/remotejobsorg) resolved to,
+// regardless of whether we ended up handing off, bailing as unaudited/unknown,
+// or finding handoff disabled. This accumulates the ATS distribution in
+// data/events/*.jsonl so we can prioritise which downstream ATS adapter to build
+// next. Must never throw into the apply flow.
+export async function recordGatewayDestination(ctx = {}, page = null, classification = {}, resolvedUrl = '', source = '') {
+  const destination = resolvedUrl || classification.url || '';
+  if (!destination) return; // nothing resolved yet — skip empty telemetry rows
+  const jobUrl =
+    ctx.job?.applicationUrl ||
+    ctx.job?.raw?.url ||
+    (typeof page?.url === 'function' ? page.url() : '') ||
+    '';
+  const payload = {
+    gatewaySource: source || ctx.job?.source_site || ctx.job?.source || '',
+    jobUrl,
+    resolvedUrl: destination,
+    downstreamAdapter: classification.adapter || '',
+    audited: Boolean(classification.audited),
+    supported: Boolean(classification.supported),
+    classificationReason: classification.reason || ''
+  };
+  await emitEvent(EventTypes.GATEWAY_DESTINATION_RESOLVED, payload, ctx.config || {}).catch(() => {});
 }

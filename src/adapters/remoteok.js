@@ -3,6 +3,7 @@ import {
   classifyApplyUrl as classifyApplyDestination,
   detectDownstreamAdapter,
   gatewayHandoffBlockedReason,
+  recordGatewayDestination,
   shouldAllowGatewayHandoff
 } from './atsResolver.js';
 
@@ -37,6 +38,7 @@ async function advance(page, step, ctx) {
   }
 
   const classification = classifyApplyDestination(resolvedUrl, { source: NAME });
+  await recordGatewayDestination(ctx, page, classification, resolvedUrl, NAME);
   if (!classification.supported) {
     return {
       step,

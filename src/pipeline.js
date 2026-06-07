@@ -29,6 +29,7 @@ import { pullDashboardApprovals } from './dashboardSync.js';
 export async function runJobHunt(config, options = {}) {
   resetReviewNotifCount();
   await appendLog('Run started', config);
+  const autoApplyBudget = createAutoApplyBudget(config);
   const profile = await loadOrBuildCandidateProfile(config);
   config.candidateProfile = profile;
   const cvData = await loadCvData(config).catch((err) => { console.warn(`[pipeline] CV parse skipped: ${err.message}`); return null; });
@@ -44,7 +45,7 @@ export async function runJobHunt(config, options = {}) {
     return [];
   }
   await pullDashboardApprovals(config);
-  await flushPendingApplyQueue(config);
+  await flushPendingApplyQueue(config, autoApplyBudget);
   const scrapeResult = await withRetry(() => runScrapers(config), { retries: 1, delayMs: 5000 });
   const jobs = scrapeResult.jobs;
   const runSummary = {
@@ -59,8 +60,6 @@ export async function runJobHunt(config, options = {}) {
   await appendLog(`Scraped ${jobs.length} job(s)`, config);
 
   const results = [];
-  let autoApplyAttempts = 0;
-  const hasAutoApplyLimit = Number.isFinite(config.maxAutoApplyPerRun) && config.maxAutoApplyPerRun > 0;
 
   for (const job of jobs) {
     try {
@@ -86,6 +85,15 @@ export async function runJobHunt(config, options = {}) {
 
       // Handle jobs accepted via Telegram — apply immediately
       if (existing?.status === 'pending_apply') {
+        if (!canAttemptAutoApply(autoApplyBudget)) {
+          const limitReason = autoApplyLimitReason(autoApplyBudget);
+          runSummary.jobsQueuedForReview += 1;
+          results.push(rowFor(job, existing.score || 0, 'apply', 'pending', {
+            reasons: [limitReason]
+          }));
+          await appendLog(`Pending apply held: ${job.title} - ${limitReason}`, config);
+          continue;
+        }
         await appendLog(`Telegram-accepted job: ${job.title} — applying now`, config);
         // Ensure applicationUrl is set from the live scraped job (most reliable)
         const jobWithUrl = { ...job, applicationUrl: job.applicationUrl || existing.job_url || existing.applicationUrl || '' };
@@ -93,6 +101,8 @@ export async function runJobHunt(config, options = {}) {
           coverLetterText: existing.cover_letter || existing.coverLetterText || '',
           applicationAnswers: existing.application_answers || existing.improved_answers || existing.applicationAnswers || {}
         };
+        consumeAutoApplyAttempt(autoApplyBudget);
+        runSummary.jobsAutoApplyAttempts += 1;
         const applyResult = await withRetry(() => attemptApplication(jobWithUrl, appPackage, config), {
           retries: 2, delayMs: 5000, backoff: 'exponential'
         });
@@ -137,7 +147,8 @@ export async function runJobHunt(config, options = {}) {
       const local = await localMatchJob(job, profile, config);
       await appendLog(`Local screen: ${job.title} scored ${local.score} (${local.recommendation})`, config);
 
-      if (local.score < config.geminiMinLocalScore) {
+      const aiConsiderationFloor = getAiConsiderationFloor(config);
+      if (local.score < aiConsiderationFloor) {
         const row = rowFor(job, local.score, 'ignore', 'skipped', local);
         runSummary.jobsIgnored += 1;
         await recordJobStatus(config, job, 'ignored', {
@@ -185,7 +196,12 @@ export async function runJobHunt(config, options = {}) {
 
       await saveOptimizerArtifacts(config, job, optimizer);
 
-      const decision = optimizer.recommendation;
+      let decision = optimizer.recommendation;
+      const promotion = getReviewPromotion(config, job, local, gemini, optimizer, decision);
+      if (promotion.promoted) {
+        decision = 'apply';
+        optimizer.recommendation = 'apply';
+      }
       const analysis = buildAnalysis(local, gemini, optimizer, mergedScore, decision);
       const row = rowFor(job, optimizer.application_score, decision, 'skipped', analysis);
 
@@ -204,8 +220,8 @@ export async function runJobHunt(config, options = {}) {
           });
           await appendLog(`Queued for review: ${job.title} (${optimizer.application_score}) - ${autoApplyGate.reason}`, config);
           await sendReviewNotification({ ...job, reviewReason: autoApplyGate.reason }, optimizer.application_score, config);
-        } else if (hasAutoApplyLimit && autoApplyAttempts >= config.maxAutoApplyPerRun) {
-          const limitReason = 'Auto-apply run limit reached. Awaiting user approval.';
+        } else if (!canAttemptAutoApply(autoApplyBudget)) {
+          const limitReason = autoApplyLimitReason(autoApplyBudget);
           row.status = 'pending';
           runSummary.jobsQueuedForReview += 1;
           await addReviewJob(job, analysis, limitReason, config);
@@ -219,10 +235,10 @@ export async function runJobHunt(config, options = {}) {
           await appendLog(`Queued for review: ${job.title} (${optimizer.application_score}) - ${limitReason}`, config);
           await sendReviewNotification({ ...job, reviewReason: limitReason }, optimizer.application_score, config);
         } else {
-          autoApplyAttempts += 1;
+          const attemptNumber = consumeAutoApplyAttempt(autoApplyBudget);
           runSummary.jobsAutoApplyAttempts += 1;
-          const limitLabel = hasAutoApplyLimit ? String(config.maxAutoApplyPerRun) : 'unlimited';
-          await appendLog(`Auto-apply attempt ${autoApplyAttempts}/${limitLabel}: ${job.title}`, config);
+          const limitLabel = Number.isFinite(autoApplyBudget.limit) ? String(autoApplyBudget.limit) : 'unlimited';
+          await appendLog(`Auto-apply attempt ${attemptNumber}/${limitLabel}: ${job.title}`, config);
           const applyResult = await withRetry(() => attemptApplication(job, optimizer, config), {
             retries: 2,
             delayMs: 5000,
@@ -269,7 +285,7 @@ export async function runJobHunt(config, options = {}) {
           await appendLog(`${row.status.toUpperCase()}: ${job.title} - ${applyResult.reason}`, config);
         }
       } else if (decision === 'review') {
-        const reviewReason = reviewReasonForOptimizer(optimizer);
+        const reviewReason = promotion.reason || reviewReasonForOptimizer(optimizer);
         row.status = 'pending';
         runSummary.jobsQueuedForReview += 1;
         await addReviewJob(job, analysis, reviewReason, config);
@@ -319,7 +335,31 @@ export async function runJobHunt(config, options = {}) {
   return results;
 }
 
-export async function flushPendingApplyQueue(config) {
+function createAutoApplyBudget(config = {}) {
+  const limit = Number(config.maxAutoApplyPerRun);
+  return {
+    limit: Number.isFinite(limit) && limit >= 0 ? limit : Infinity,
+    attempts: 0
+  };
+}
+
+function canAttemptAutoApply(budget) {
+  if (!budget) return true;
+  return budget.attempts < budget.limit;
+}
+
+function consumeAutoApplyAttempt(budget) {
+  if (!budget) return 1;
+  budget.attempts += 1;
+  return budget.attempts;
+}
+
+function autoApplyLimitReason(budget) {
+  if (budget?.limit === 0) return 'Auto-apply is disabled for this run. Awaiting user approval.';
+  return 'Auto-apply run limit reached. Awaiting user approval.';
+}
+
+export async function flushPendingApplyQueue(config, autoApplyBudget = createAutoApplyBudget(config)) {
   // Auto-apply queue flushing re-enabled after successful BruntWork pipeline test (2026-05-30)
 
   const store = await loadJobStore(config);
@@ -327,6 +367,10 @@ export async function flushPendingApplyQueue(config) {
   if (pending.length === 0) return;
   await appendLog(`Flushing ${pending.length} Telegram-approved job(s)`, config);
   for (const record of pending) {
+    if (!canAttemptAutoApply(autoApplyBudget)) {
+      await appendLog(`Pending apply held: ${record.title} - ${autoApplyLimitReason(autoApplyBudget)}`, config);
+      break;
+    }
     // Normalise: jobStore saves applicationUrl as job_url — resolve both
     const job = {
       ...record,
@@ -343,6 +387,7 @@ export async function flushPendingApplyQueue(config) {
       coverLetterText: record.cover_letter || record.coverLetterText || '',
       applicationAnswers: record.application_answers || record.improved_answers || record.applicationAnswers || {}
     };
+    consumeAutoApplyAttempt(autoApplyBudget);
     const applyResult = await withRetry(() => attemptApplication(job, appPackage, config), {
       retries: 2, delayMs: 5000, backoff: 'exponential'
     });
@@ -466,6 +511,12 @@ function reviewReasonForOptimizer(optimizer) {
   return 'Optimizer recommends manual review before applying.';
 }
 
+export function getAiConsiderationFloor(config = {}) {
+  const explicit = Number.parseInt(config.aiConsiderationFloor ?? process.env.AI_CONSIDERATION_FLOOR, 10);
+  if (Number.isFinite(explicit)) return explicit;
+  return 40;
+}
+
 function rowFor(job, score, decision, status, analysis = {}) {
   return {
     title: job.title,
@@ -485,7 +536,12 @@ function statusForApplicationResult(applyResult) {
   return 'manual_review';
 }
 
-function getAutoApplyGate(config, job) {
+// Gateway sources resolve to a third-party ATS at apply time; they auto-apply
+// only when ALLOW_GATEWAY_AUTO_SUBMIT is on, and only hand off to audited
+// downstream adapters (the adapter + atsResolver enforce the rest).
+const GATEWAY_SOURCES = new Set(['remoteok', 'remotejobsorg']);
+
+export function getAutoApplyGate(config, job) {
   // Auto-apply gate: re-enabled after successful BruntWork pipeline test with adapters + re-verification (2026-05-30)
 
   if (!config.autoApply) {
@@ -502,17 +558,17 @@ function getAutoApplyGate(config, job) {
       reason: 'Influx Typeform automation is review-only until required-field mapping and submission proof are reliable.'
     };
   }
-  if (source === 'remoteok') {
-    return {
-      enabled: false,
-      reason: 'RemoteOK resolves to third-party apply pages; review the resolved ATS before allowing automation.'
-    };
-  }
   const siteConfig = config.sites?.[source];
   if (siteConfig?.autoApplyEnabled !== true) {
     return {
       enabled: false,
       reason: `${source} auto-apply is disabled in config/sites.json. Awaiting user approval.`
+    };
+  }
+  if (GATEWAY_SOURCES.has(source) && config.allowGatewayAutoSubmit !== true) {
+    return {
+      enabled: false,
+      reason: `${source} is a gateway source that resolves to a third-party ATS. Set ALLOW_GATEWAY_AUTO_SUBMIT=true to enable audited handoff; queued for review.`
     };
   }
   if (source === 'himalayas' && !job.raw?.externalApplyUrl) {
@@ -531,6 +587,67 @@ function getAutoApplyGate(config, job) {
   }
 
   return { enabled: true, reason: '' };
+}
+
+export function getReviewPromotion(config, job, local, verification, optimizer, decision) {
+  if (decision !== 'review') {
+    return { promoted: false, reason: '' };
+  }
+
+  const profileName = String(config.profileName || '').toLowerCase();
+  const aligned = isProfileAlignedRole(config, job);
+  if (!aligned) {
+    return {
+      promoted: false,
+      reason: reviewReasonForOptimizer(optimizer)
+    };
+  }
+
+  const localScore = Number.parseInt(local?.score, 10);
+  const adjustedScore = Number.parseInt(verification?.adjusted_score, 10);
+  const applicationScore = Number.parseInt(optimizer?.application_score, 10);
+  const verifierApproved = verification?.should_apply === true;
+  const noHighRisk = !(optimizer?.risk_flags || []).some((flag) => flag.severity === 'high');
+
+  if (
+    verifierApproved &&
+    noHighRisk &&
+    Number.isFinite(localScore) &&
+    localScore >= 40 &&
+    Number.isFinite(adjustedScore) &&
+    adjustedScore >= 65 &&
+    Number.isFinite(applicationScore) &&
+    applicationScore >= 65
+  ) {
+    return {
+      promoted: true,
+      reason: 'Profile-aligned review role promoted because AI verification approved the fit.'
+    };
+  }
+
+  return {
+    promoted: false,
+    reason: verifierApproved
+      ? reviewReasonForOptimizer(optimizer)
+      : 'AI verification did not approve live submission. Queued for review.'
+  };
+}
+
+export function isProfileAlignedRole(config = {}, job = {}) {
+  const profileName = String(config.profileName || '').toLowerCase();
+  const source = String(job.source_site || job.source || '').toLowerCase();
+  const text = `${job.title || ''} ${job.description || ''} ${job.requirements || ''}`.toLowerCase();
+
+  if (profileName.includes('tolu')) {
+    return /\b(seo|technical seo|shopify|wordpress|website|web developer|web admin|frontend|front end|backend|full stack|full-stack|javascript|html|css|e-?commerce|digital marketing|content)\b/i.test(text);
+  }
+
+  if (profileName.includes('sister')) {
+    if (source === 'influx') return false;
+    return /\b(customer support|customer service|customer success|virtual assistant|administrative assistant|admin assistant|executive assistant|crm|hubspot|zendesk|data entry|calendar|lead generation|lead qualification|appointment setter|sales support|business development|operations coordinator|marketing assistant|client success|telemarketer|outbound)\b/i.test(text);
+  }
+
+  return false;
 }
 
 function isWithinPeakHours(config) {

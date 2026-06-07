@@ -1,5 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { createJobHash } from '../src/jobHash.js';
 import { BaseScraper } from '../src/scrapers/baseScraper.js';
 import { parseJobDetail as parseBruntWorkJobDetail, parseListingLinks as parseBruntWorkListingLinks } from '../src/scrapers/bruntwork.js';
@@ -463,3 +466,58 @@ function pickResolverFields(result) {
     audited: result.audited
   };
 }
+
+test('getAutoApplyGate enables gateway sources only when ALLOW_GATEWAY_AUTO_SUBMIT is on', async () => {
+  const { getAutoApplyGate } = await import('../src/pipeline.js');
+  const baseConfig = (allow) => ({
+    autoApply: true,
+    allowGatewayAutoSubmit: allow,
+    sites: { remoteok: { autoApplyEnabled: true }, remotejobsorg: { autoApplyEnabled: true } }
+  });
+
+  for (const source of ['remoteok', 'remotejobsorg']) {
+    const enabled = getAutoApplyGate(baseConfig(true), { source_site: source });
+    assert.equal(enabled.enabled, true, `${source} should be enabled when flag on`);
+
+    const blocked = getAutoApplyGate(baseConfig(false), { source_site: source });
+    assert.equal(blocked.enabled, false, `${source} should be blocked when flag off`);
+    assert.match(blocked.reason, /ALLOW_GATEWAY_AUTO_SUBMIT/);
+  }
+});
+
+test('getAutoApplyGate still respects per-site disable for gateway sources', async () => {
+  const { getAutoApplyGate } = await import('../src/pipeline.js');
+  const gate = getAutoApplyGate(
+    { autoApply: true, allowGatewayAutoSubmit: true, sites: { remoteok: { autoApplyEnabled: false } } },
+    { source_site: 'remoteok' }
+  );
+  assert.equal(gate.enabled, false);
+  assert.match(gate.reason, /config\/sites\.json/);
+});
+
+test('remoteok adapter records gateway destination telemetry even when handoff is blocked', async () => {
+  const { remoteOkAdapter } = await import('../src/adapters/remoteok.js');
+  const eventsDir = path.join(os.tmpdir(), `gw-telemetry-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+  const page = {
+    url: () => 'https://remoteok.com/remote-jobs/remote-developer-acme-123',
+    goto: async () => { throw new Error('goto should not be called when handoff is disabled'); }
+  };
+
+  const result = await remoteOkAdapter.advance(page, 'DETAILS', {
+    config: { testMode: false, noRealSubmission: false, eventsDir, profileName: 'tester' },
+    job: { source_site: 'remoteok', raw: { apply_url: 'https://boards.greenhouse.io/acme/jobs/123' } }
+  });
+
+  // Behaviour unchanged: blocked because the gateway flag is off.
+  assert.equal(result.advanced, false);
+  assert.match(result.reason, /live gateway handoff is disabled/i);
+
+  // Telemetry still recorded the resolved destination.
+  const raw = await fs.readFile(path.join(eventsDir, 'events.jsonl'), 'utf8');
+  const rec = JSON.parse(raw.trim().split('\n').at(-1));
+  assert.equal(rec.type, 'gateway.destination_resolved');
+  assert.equal(rec.data.downstreamAdapter, 'greenhouse');
+  assert.equal(rec.data.supported, true);
+  assert.equal(rec.data.audited, true);
+  assert.equal(rec.data.gatewaySource, 'remoteok');
+});

@@ -2,6 +2,7 @@ import { FormStep, Proof, noProof } from './types.js';
 import {
   classifyApplyUrl as classifyApplyDestination,
   gatewayHandoffBlockedReason,
+  recordGatewayDestination,
   shouldAllowGatewayHandoff
 } from './atsResolver.js';
 
@@ -63,6 +64,7 @@ async function advance(page, step, ctx) {
   }
 
   const handoffProbe = classifyApplyDestination(ctx.job?.raw?.apply_url || ctx.job?.applicationUrl || ctx.job?.applyUrl || '', { source: NAME });
+  await recordGatewayDestination(ctx, page, handoffProbe, handoffProbe.url, NAME);
   if (handoffProbe.supported && !shouldAllowGatewayHandoff(handoffProbe, ctx.config)) {
     return {
       step,
@@ -84,6 +86,7 @@ async function advance(page, step, ctx) {
   const trackedApplyUrl = await applyUrlPromise || await extractEmbeddedApplyUrl(page);
   if (trackedApplyUrl) {
     const classification = classifyApplyDestination(trackedApplyUrl, { source: NAME });
+    await recordGatewayDestination(ctx, page, classification, trackedApplyUrl, NAME);
     if (!classification.supported) {
       return {
         step,
@@ -107,6 +110,7 @@ async function advance(page, step, ctx) {
 
   const afterUrl = page.url();
   const classification = classifyApplyDestination(afterUrl, { source: NAME });
+  await recordGatewayDestination(ctx, page, classification, afterUrl, NAME);
   if (afterUrl !== beforeUrl && classification.supported) {
     return {
       step: FormStep.DETAILS,

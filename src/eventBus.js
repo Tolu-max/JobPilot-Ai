@@ -8,7 +8,8 @@ export const EventTypes = Object.freeze({
   NOTIFICATION_SENT: 'notification.sent',
   NOTIFICATION_FAILED: 'notification.failed',
   RESUME_PARSED: 'resume.parsed',
-  SYSTEM_ERROR: 'system.error'
+  SYSTEM_ERROR: 'system.error',
+  GATEWAY_DESTINATION_RESOLVED: 'gateway.destination_resolved'
 });
 
 export async function emitEvent(type, payload = {}, config = {}) {
