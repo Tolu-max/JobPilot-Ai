@@ -7,6 +7,7 @@ import applyToJobAdapter from './applytojob.js';
 import remoteJobsOrgAdapter from './remotejobsorg.js';
 import remoteOkAdapter from './remoteok.js';
 import greenhouseAdapter from './greenhouse.js';
+import leverAdapter from './lever.js';
 import genericAdapter from './generic.js';
 
 const ADAPTERS = [
@@ -17,6 +18,7 @@ const ADAPTERS = [
   remoteJobsOrgAdapter,
   remoteOkAdapter,
   greenhouseAdapter,
+  leverAdapter,
   genericAdapter
 ];
 
@@ -40,4 +42,4 @@ export function registerAdapter(adapter) {
   ADAPTERS.splice(ADAPTERS.length - 1, 0, adapter);
 }
 
-export { bruntworkAdapter, influxAdapter, jobbermanAdapter, applyToJobAdapter, remoteJobsOrgAdapter, remoteOkAdapter, greenhouseAdapter, genericAdapter };
+export { bruntworkAdapter, influxAdapter, jobbermanAdapter, applyToJobAdapter, remoteJobsOrgAdapter, remoteOkAdapter, greenhouseAdapter, leverAdapter, genericAdapter };

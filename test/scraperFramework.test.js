@@ -397,7 +397,7 @@ test('remoteok resolver only allows audited downstream adapters', () => {
   );
   assert.deepEqual(
     classifyApplyUrl('https://jobs.lever.co/acme/123'),
-    { supported: false, adapter: 'lever', reason: 'adapter-not-audited' }
+    { supported: true, adapter: 'lever', reason: 'supported-audited-adapter' }
   );
   assert.deepEqual(
     classifyApplyUrl('mailto:jobs@example.com'),
@@ -412,7 +412,7 @@ test('shared ATS resolver separates audited adapters from manual-review platform
   );
   assert.deepEqual(
     pickResolverFields(classifyApplyDestination('https://jobs.lever.co/acme/123')),
-    { supported: false, adapter: 'lever', reason: 'adapter-not-audited', kind: 'ats', audited: false }
+    { supported: true, adapter: 'lever', reason: 'supported-audited-adapter', kind: 'ats', audited: true }
   );
   assert.deepEqual(
     pickResolverFields(classifyApplyDestination('https://jobs.smartrecruiters.com/acme/123')),

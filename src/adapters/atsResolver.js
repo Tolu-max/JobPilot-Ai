@@ -54,7 +54,7 @@ const PLATFORM_RULES = [
     adapter: 'lever',
     label: 'Lever',
     kind: 'ats',
-    audited: false,
+    audited: true,
     patterns: [/jobs\.lever\.co/i]
   },
   {
