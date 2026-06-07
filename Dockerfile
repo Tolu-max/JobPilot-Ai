@@ -2,7 +2,7 @@
 # Built on Microsoft's Playwright image so Chromium + system deps are preinstalled.
 # Multi-arch (amd64/arm64) friendly. ~1.4 GB final size.
 
-FROM mcr.microsoft.com/playwright:v1.49.1-jammy
+FROM mcr.microsoft.com/playwright:v1.60.0-jammy
 
 ENV NODE_ENV=production \
     TZ=UTC \
