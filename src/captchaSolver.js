@@ -121,6 +121,33 @@ async function isEnterpriseRecaptcha(page) {
 // ---------------------------------------------------------------------------
 
 async function solveWithCapSolver(page, captchaType, apiKey, config) {
+  // CapSolver runs proxyless, so errors like "Proxy IP banned by target service"
+  // or "captcha unsolvable" are transient on their side — a fresh task uses a
+  // different solving IP. Retry the whole create+poll a few times before failing.
+  const maxAttempts = Math.max(
+    1,
+    Number(config?.captchaSolverMaxAttempts || process.env.CAPTCHA_SOLVER_MAX_ATTEMPTS || 3)
+  );
+  let last = { ok: false, reason: 'CapSolver: no attempt made.' };
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    last = await attemptCapSolverOnce(page, captchaType, apiKey, config);
+    if (last.ok || !isTransientCapSolverError(last.reason)) return last;
+    await appendLog(
+      `[CaptchaSolver] CapSolver transient failure (attempt ${attempt}/${maxAttempts}): ${last.reason}`,
+      config
+    );
+    if (attempt < maxAttempts) await page.waitForTimeout(2000);
+  }
+  return last;
+}
+
+export function isTransientCapSolverError(reason = '') {
+  return /proxy ip banned|unsolvable|timed out|temporarily|rate.?limit|try again|service unavailable|poll error|gettaskresult|http 5\d\d/i.test(
+    String(reason || '')
+  );
+}
+
+async function attemptCapSolverOnce(page, captchaType, apiKey, config) {
   try {
     const pageUrl = page.url();
     const siteKey = await waitForSiteKey(page, captchaType, 15000);

@@ -46,7 +46,9 @@ export function buildConfig(argv = process.argv) {
     capSiteLimits: hasMaxJobsOverride,
     testPlatformMode,
     e2eTestMode,
-    platformMaxJobsPerSite
+    platformMaxJobsPerSite,
+    envPrefix,
+    env: process.env
   });
   const aiMode = normalizeAiMode(process.env.AI_MODE || (testPlatformMode ? 'MOCK' : 'REAL'));
 
@@ -79,11 +81,21 @@ export function buildConfig(argv = process.argv) {
     openRouterModel: process.env.OPENROUTER_MODEL || 'meta-llama/llama-3.3-70b-instruct',
     openRouterSiteUrl: process.env.OPENROUTER_SITE_URL || 'http://localhost',
     openRouterAppName: process.env.OPENROUTER_APP_NAME || 'JobPilot',
+    deepseekApiKey: process.env.DEEPSEEK_API_KEY || '',
+    deepseekModel: process.env.DEEPSEEK_MODEL || 'deepseek-v4-flash',
+    deepseekBaseUrl: process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com',
+    deepseekThinking: String(process.env.DEEPSEEK_THINKING || 'disabled').trim().toLowerCase() === 'enabled' ? 'enabled' : 'disabled',
+    deepseekMaxTokens: readNumber(process.env.DEEPSEEK_MAX_TOKENS, 0),
+    deepseekFastFilterMaxTokens: readNumber(process.env.DEEPSEEK_FAST_FILTER_MAX_TOKENS, 350),
+    deepseekVerificationMaxTokens: readNumber(process.env.DEEPSEEK_VERIFICATION_MAX_TOKENS, 450),
+    deepseekApplicationMaxTokens: readNumber(process.env.DEEPSEEK_APPLICATION_MAX_TOKENS, 900),
     aiCachePath: path.resolve(rootDir, 'data', 'aiCache.json'),
     aiRouterLogPath: path.resolve(rootDir, 'logs', 'aiRouter.log'),
     applicantEmail: process.env[`${envPrefix}_APPLICANT_EMAIL`] || process.env.APPLICANT_EMAIL || preferences.applicantEmail || '',
     himalayasEmail: process.env[`${envPrefix}_HIMALAYAS_EMAIL`] || process.env.HIMALAYAS_EMAIL || '',
     himalayasPassword: process.env[`${envPrefix}_HIMALAYAS_PASSWORD`] || process.env.HIMALAYAS_PASSWORD || '',
+    jobbermanEmail: process.env[`${envPrefix}_JOBBERMAN_EMAIL`] || process.env.JOBBERMAN_EMAIL || '',
+    jobbermanPassword: process.env[`${envPrefix}_JOBBERMAN_PASSWORD`] || process.env.JOBBERMAN_PASSWORD || '',
     himalayasBrowserProfileDir: resolveProfilePath(
       rootDir,
       profileDir,
@@ -217,8 +229,9 @@ function readTextSync(filePath, fallback) {
 
 function readCsv(value, fallback) {
   if (!value) return Array.isArray(fallback) ? fallback : [];
+  if (Array.isArray(value)) return parseSiteList(value);
   return String(value)
-    .split(',')
+    .split(/[\s,;|]+/)
     .map(normalizeSiteName)
     .filter(Boolean);
 }
@@ -229,8 +242,15 @@ function readOptionalCsv(value) {
 }
 
 function readOptionalList(value) {
-  if (!Array.isArray(value)) return null;
-  return value.map(normalizeSiteName).filter(Boolean);
+  if (value === undefined || value === null || value === '') return null;
+  return readCsv(value, []);
+}
+
+export function parseSiteList(values) {
+  return values
+    .flatMap((value) => String(value || '').split(/[\s,;|]+/))
+    .map(normalizeSiteName)
+    .filter(Boolean);
 }
 
 function buildSites({
@@ -243,7 +263,9 @@ function buildSites({
   capSiteLimits,
   testPlatformMode,
   e2eTestMode,
-  platformMaxJobsPerSite
+  platformMaxJobsPerSite,
+  envPrefix,
+  env = process.env
 }) {
   const merged = {};
   const siteNames = new Set([
@@ -281,6 +303,8 @@ function buildSites({
       merged[site].maxJobsPerRun = Math.min(merged[site].maxJobsPerRun, platformMaxJobsPerSite);
       merged[site].cooldownMinutes = 0;
     }
+
+    applySiteEnvOverrides(merged[site], site, envPrefix, env);
   }
 
   for (const [index, site] of sitePriority.entries()) {
@@ -295,6 +319,60 @@ function buildSites({
   }
 
   return merged;
+}
+
+function applySiteEnvOverrides(siteConfig, site, envPrefix, env) {
+  const sitePrefix = site.toUpperCase().replace(/[^A-Z0-9]+/g, '_');
+  const scoped = (name) => env[`${envPrefix}_${sitePrefix}_${name}`] ?? env[`${sitePrefix}_${name}`];
+  const csvFields = {
+    boards: 'BOARDS',
+    boardTokens: 'BOARD_TOKENS',
+    includeKeywords: 'INCLUDE_KEYWORDS',
+    includeTitleKeywords: 'INCLUDE_TITLE_KEYWORDS',
+    requireTitleKeywords: 'REQUIRE_TITLE_KEYWORDS',
+    excludeKeywords: 'EXCLUDE_KEYWORDS',
+    preferredLocations: 'PREFERRED_LOCATIONS',
+    categories: 'CATEGORIES',
+    queries: 'QUERIES'
+  };
+
+  for (const [field, envName] of Object.entries(csvFields)) {
+    const value = scoped(envName);
+    if (value !== undefined && value !== '') siteConfig[field] = readStringList(value);
+  }
+
+  const numericFields = {
+    maxJobsPerRun: 'MAX_JOBS_PER_RUN',
+    maxAgeDays: 'MAX_AGE_DAYS',
+    cooldownMinutes: 'COOLDOWN_MINUTES',
+    timeoutMs: 'TIMEOUT_MS'
+  };
+  for (const [field, envName] of Object.entries(numericFields)) {
+    const value = scoped(envName);
+    if (value !== undefined && value !== '') siteConfig[field] = readNumber(value, siteConfig[field]);
+  }
+
+  const booleanFields = {
+    enabled: 'ENABLED',
+    autoApplyEnabled: 'AUTO_APPLY_ENABLED',
+    remoteOnly: 'REMOTE_ONLY',
+    englishOnly: 'ENGLISH_ONLY',
+    allowOtherLocationsWhenNoPreferred: 'ALLOW_OTHER_LOCATIONS_WHEN_NO_PREFERRED'
+  };
+  for (const [field, envName] of Object.entries(booleanFields)) {
+    const value = scoped(envName);
+    if (value !== undefined && value !== '') siteConfig[field] = readBoolean(value, siteConfig[field]);
+  }
+}
+
+function readStringList(value) {
+  if (Array.isArray(value)) {
+    return value.flatMap(readStringList).filter(Boolean);
+  }
+  return String(value || '')
+    .split(/[,;|]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
 }
 
 function defaultSitesConfig() {
@@ -339,7 +417,7 @@ function normalizeAiMode(value) {
 
 function normalizeAiProvider(value) {
   const normalized = String(value || 'gemini').trim().toLowerCase();
-  if (['gemini', 'groq', 'openrouter'].includes(normalized)) return normalized;
+  if (['gemini', 'groq', 'openrouter', 'deepseek'].includes(normalized)) return normalized;
   return 'gemini';
 }
 

@@ -6,12 +6,30 @@ function matches(url) {
   return /jobberman\.com/i.test(String(url || ''));
 }
 
-async function getCurrentStep(page) {
-  const body = await page.locator('body').innerText({ timeout: 5000 }).catch(() => '');
-  if (/login to apply|log in|sign up|continue with google|continue with linkedin/i.test(body)) {
-    return FormStep.ERROR;
+const LOGIN_URL = 'https://www.jobberman.com/seeker/login';
+const LOGIN_WALL = /login to apply|log ?in to (your )?account|sign in to apply|continue with google|continue with linkedin/i;
+const SUBMITTED = /application (sent|submitted|received)|successfully applied|you have applied/i;
+
+async function bodyText(page) {
+  return page.locator('body').innerText({ timeout: 5000 }).catch(() => '');
+}
+
+async function getCurrentStep(page, ctx = {}) {
+  let body = await bodyText(page);
+
+  // Jobberman requires an authenticated jobseeker session. If we hit the login
+  // wall, log in with the profile's credentials (the persistent browser context
+  // keeps the session for future runs) and return to the job before continuing.
+  if (LOGIN_WALL.test(body)) {
+    const login = await ensureJobbermanLogin(page, ctx);
+    if (!login.ok) return FormStep.ERROR;
+    const jobUrl = ctx?.job?.applicationUrl || ctx?.job?.jobUrl;
+    if (jobUrl) await page.goto(jobUrl, { waitUntil: 'domcontentloaded' }).catch(() => {});
+    await page.waitForTimeout(1500);
+    body = await bodyText(page);
   }
-  if (/application (sent|submitted|received)|successfully applied|you have applied/i.test(body)) {
+
+  if (SUBMITTED.test(body)) {
     return FormStep.SUBMITTED;
   }
   if (/apply for .+submit and apply|submit and apply|apply here/i.test(body)) {
@@ -20,10 +38,60 @@ async function getCurrentStep(page) {
   return FormStep.UNKNOWN;
 }
 
+async function ensureJobbermanLogin(page, ctx = {}) {
+  const email = ctx?.config?.jobbermanEmail;
+  const password = ctx?.config?.jobbermanPassword;
+  if (!email || !password) {
+    return { ok: false, reason: 'No Jobberman credentials configured.' };
+  }
+
+  try {
+    if (!/login|sign-?in/i.test(page.url())) {
+      await page.goto(LOGIN_URL, { waitUntil: 'domcontentloaded' }).catch(() => {});
+      await page.waitForTimeout(1500);
+    }
+
+    const emailInput = page
+      .locator('input[type="email"], input[name="email"], #email, input[autocomplete="username"]')
+      .first();
+    await emailInput.waitFor({ state: 'visible', timeout: 10000 });
+    await emailInput.fill(email);
+
+    // Some flows reveal the password field only after the email is submitted.
+    let passwordInput = page.locator('input[type="password"], input[name="password"], #password').first();
+    if (!(await passwordInput.isVisible({ timeout: 2000 }).catch(() => false))) {
+      await page.getByRole('button', { name: /continue|next|log ?in|sign ?in/i }).first().click({ force: true }).catch(() => {});
+      await page.waitForTimeout(1500);
+      passwordInput = page.locator('input[type="password"], input[name="password"], #password').first();
+    }
+    await passwordInput.waitFor({ state: 'visible', timeout: 10000 });
+    await passwordInput.fill(password);
+
+    await Promise.all([
+      page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {}),
+      page.getByRole('button', { name: /log ?in|sign ?in|continue|submit/i }).first().click({ force: true }).catch(() => {})
+    ]);
+    await page.waitForTimeout(2500);
+
+    const after = await bodyText(page);
+    if (/incorrect (email|password)|invalid (email|credentials|login)|wrong password/i.test(after)) {
+      return { ok: false, reason: 'Jobberman rejected the credentials.' };
+    }
+    if (LOGIN_WALL.test(after) && /password/i.test(after)) {
+      return { ok: false, reason: 'Jobberman login form still present after submit (extra verification or CAPTCHA).' };
+    }
+    return { ok: true, reason: 'Logged into Jobberman.' };
+  } catch (error) {
+    return { ok: false, reason: `Jobberman login error: ${error.message}` };
+  }
+}
+
 async function fillStep(page, step, ctx) {
   const body = await page.locator('body').innerText({ timeout: 5000 }).catch(() => '');
-  if (/login to apply|log in|sign up|continue with google|continue with linkedin/i.test(body)) {
-    throw manualReviewError('Jobberman requires a logged-in jobseeker account before the application form is available.');
+  if (LOGIN_WALL.test(body)) {
+    // getCurrentStep already attempted automated login; reaching here means it
+    // failed (missing creds, bad creds, or a login CAPTCHA). Hand off to a human.
+    throw manualReviewError('Jobberman automated login did not succeed; a logged-in jobseeker account is required to apply.');
   }
 
   const applyButton = page.getByRole('button', { name: /apply here/i }).first();

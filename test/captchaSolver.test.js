@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { chromium } from 'playwright';
-import { solveCaptchaAuto } from '../src/captchaSolver.js';
+import { solveCaptchaAuto, isTransientCapSolverError } from '../src/captchaSolver.js';
 
 const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
 const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash-lite';
@@ -175,5 +175,33 @@ test('Live reCAPTCHA v2 demo solve attempt', { skip: !RUN_BROWSER_TESTS || !GEMI
   } finally {
     await page.waitForTimeout(2000);
     await context.close();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Transient-error classification (pure, no browser) — drives CapSolver retries
+// ---------------------------------------------------------------------------
+test('isTransientCapSolverError flags retryable CapSolver failures', () => {
+  const transient = [
+    'CapSolver poll error: Proxy IP banned by target service',
+    'CapSolver poll error: ERROR_CAPTCHA_UNSOLVABLE',
+    'CapSolver getTaskResult timed out after 10000ms',
+    'CapSolver poll HTTP 503: service unavailable',
+    'Service temporarily unavailable, try again'
+  ];
+  for (const reason of transient) {
+    assert.equal(isTransientCapSolverError(reason), true, `expected transient: ${reason}`);
+  }
+});
+
+test('isTransientCapSolverError does not retry permanent failures', () => {
+  const permanent = [
+    'CapSolver: could not extract a valid site key from page.',
+    'CapSolver createTask error: ERROR_KEY_DENIED_ACCESS',
+    'Unsupported or undetected CAPTCHA type: unknown',
+    ''
+  ];
+  for (const reason of permanent) {
+    assert.equal(isTransientCapSolverError(reason), false, `expected permanent: ${reason}`);
   }
 });

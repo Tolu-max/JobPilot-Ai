@@ -251,7 +251,7 @@ async function runSiteAdapterFlow({ adapter, page, config, coverLetterText, appl
       }
 
       stepCount += 1;
-      const currentStep = await activeAdapter.getCurrentStep(page);
+      const currentStep = await activeAdapter.getCurrentStep(page, ctx);
       console.log(`[Adapter:${activeAdapter.name}] Step ${stepCount}: ${currentStep}`);
 
       // Check if we've reached a submitted state
@@ -1182,7 +1182,7 @@ async function waitForCaptchaSolve(page, config, job, debug) {
   if (config.captchaSolvApiKey || process.env.CAPTCHASOLV_API_KEY || config.capsolverApiKey || process.env.CAPSOLVER_API_KEY) {
     const autoResult = await solveCaptchaAuto(page, config);
     if (autoResult.ok) {
-      await sendNotification(`CAPTCHA auto-solved for ${job.title}. Resuming automation.`, config);
+      await sendNotification(`CAPTCHA token solved for ${job.title}. Continuing application verification.`, config);
       return { ok: true, reason: autoResult.reason };
     }
     // If Google rate-limited us, don't wait for impossible manual solve - skip the job
@@ -1213,13 +1213,13 @@ async function waitForCaptchaSolve(page, config, job, debug) {
 
     // Check if CAPTCHA is truly solved (token present)
     if (await hasRecaptchaToken(page)) {
-      await sendNotification(`CAPTCHA cleared for ${job.title}. Resuming automation.`, config);
+      await sendNotification(`CAPTCHA cleared for ${job.title}. Continuing application verification.`, config);
       return { ok: true, reason: 'CAPTCHA cleared manually.' };
     }
 
     // Also accept if CAPTCHA elements are completely gone (non-reCAPTCHA forms)
     if (!(await hasCaptcha(page)) && !(await hasRecaptchaWidget(page))) {
-      await sendNotification(`CAPTCHA cleared for ${job.title}. Resuming automation.`, config);
+      await sendNotification(`CAPTCHA cleared for ${job.title}. Continuing application verification.`, config);
       return { ok: true, reason: 'CAPTCHA cleared (no widget detected).' };
     }
   }
@@ -1450,10 +1450,11 @@ async function generateAiAnswer(questionPrompt, job, config) {
     return null;
   }
 
+  const deepseekKey = config.deepseekApiKey || process.env.DEEPSEEK_API_KEY;
   const groqKey = config.groqApiKey || process.env.GROQ_API_KEY;
   const geminiKey = config.geminiApiKey || process.env.GEMINI_API_KEY;
   const openRouterKey = config.openRouterApiKey || process.env.OPENROUTER_API_KEY;
-  if (!groqKey && !geminiKey && !openRouterKey) return null;
+  if (!deepseekKey && !groqKey && !geminiKey && !openRouterKey) return null;
 
   const cacheKey = `${job?.title || ''}|${cleanQuestion}`;
   if (aiAnswerCache.has(cacheKey)) return aiAnswerCache.get(cacheKey);
@@ -1489,6 +1490,15 @@ Question on the application form: "${cleanQuestion}"
 Write a concise, specific answer (1-3 sentences):`;
 
   const providers = [];
+  if (deepseekKey && !isAiProviderDisabled('deepseek', config)) {
+    const deepseekBaseUrl = String(config.deepseekBaseUrl || process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com').replace(/\/$/, '');
+    providers.push({
+      provider: 'deepseek',
+      url: `${deepseekBaseUrl}/chat/completions`,
+      key: deepseekKey,
+      model: config.deepseekModel || process.env.DEEPSEEK_MODEL || 'deepseek-v4-flash'
+    });
+  }
   if (groqKey && !isAiProviderDisabled('groq', config)) {
     providers.push({ provider: 'groq', url: 'https://api.groq.com/openai/v1/chat/completions', key: groqKey, model: config.groqModel || process.env.GROQ_MODEL || 'llama-3.3-70b-versatile' });
   }
@@ -1515,7 +1525,16 @@ Write a concise, specific answer (1-3 sentences):`;
             { role: 'user', content: userPrompt }
           ],
           temperature: 0.2,
-          max_tokens: 150
+          max_tokens: 150,
+          ...(provider.provider === 'deepseek'
+            ? {
+                thinking: {
+                  type: String(config.deepseekThinking || process.env.DEEPSEEK_THINKING || 'disabled').trim().toLowerCase() === 'enabled'
+                    ? 'enabled'
+                    : 'disabled'
+                }
+              }
+            : {})
         })
       });
 
@@ -1554,7 +1573,7 @@ Write a concise, specific answer (1-3 sentences):`;
 function isAiProviderDisabled(provider, config = {}) {
   const disabled = config.aiDisabledProviders || process.env.AI_DISABLED_PROVIDERS || process.env.DISABLED_AI_PROVIDERS || '';
   return String(disabled)
-    .split(',')
+    .split(/[\s,]+/)
     .map((item) => item.trim().toLowerCase())
     .filter(Boolean)
     .includes(String(provider || '').toLowerCase());
