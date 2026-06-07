@@ -4,10 +4,11 @@ import { createJobHash } from '../src/jobHash.js';
 import { BaseScraper } from '../src/scrapers/baseScraper.js';
 import { parseJobDetail as parseBruntWorkJobDetail, parseListingLinks as parseBruntWorkListingLinks } from '../src/scrapers/bruntwork.js';
 import { filterInfluxJobsByPolicy, parseInfluxJobDetail, parseInfluxJobLinks } from '../src/scrapers/influx.js';
-import { filterJobbermanJobsByPolicy, parseJobbermanJobDetail, parseJobbermanListingLinks } from '../src/scrapers/jobberman.js';
+import { filterJobbermanJobsByPolicy, parseJobbermanJobDetail, parseJobbermanListingLinks, resolveJobbermanBoardUrls } from '../src/scrapers/jobberman.js';
 import { orderedEnabledSites } from '../src/scrapers/index.js';
 import { RemoteJobsOrgScraper } from '../src/scrapers/remotejobsorg.js';
 import { RemoteOkScraper } from '../src/scrapers/remoteok.js';
+import { GreenhouseScraper } from '../src/scrapers/greenhouse.js';
 import { classifyApplyUrl, detectDownstreamAdapter } from '../src/adapters/remoteok.js';
 import {
   classifyApplyUrl as classifyApplyDestination,
@@ -62,7 +63,7 @@ test('registry includes wellfound scrape-only source', () => {
   assert.deepEqual(sites, ['wellfound', 'remotejobsorg']);
 });
 
-test('job hash dedupes the same company/title across sources', () => {
+test('job hash prioritizes real URLs over company/title fallbacks', () => {
   const left = createJobHash({
     source: 'remoteok',
     title: 'SEO Specialist',
@@ -75,8 +76,15 @@ test('job hash dedupes the same company/title across sources', () => {
     company: 'Acme',
     applicationUrl: 'https://remotive.com/job/2'
   });
+  const sameUrlWithTracking = createJobHash({
+    source: 'remoteok',
+    title: 'SEO Specialist',
+    company: 'Acme',
+    applicationUrl: 'https://remoteok.com/job/1?utm_source=newsletter'
+  });
 
-  assert.equal(left, right);
+  assert.notEqual(left, right);
+  assert.equal(left, sameUrlWithTracking);
 });
 
 test('influx parser discovers links and apply form URL', () => {
@@ -215,6 +223,37 @@ test('jobberman policy keeps recent remote jobs only', () => {
   );
 });
 
+test('jobberman board URLs default to the single customer-service board', () => {
+  assert.deepEqual(resolveJobbermanBoardUrls({}), [
+    'https://www.jobberman.com/jobs/customer-service-support/remote'
+  ]);
+  assert.deepEqual(resolveJobbermanBoardUrls({ jobsUrl: 'https://www.jobberman.com/jobs/admin-office/remote' }), [
+    'https://www.jobberman.com/jobs/admin-office/remote'
+  ]);
+});
+
+test('jobberman categories expand into per-board remote URLs and de-duplicate', () => {
+  assert.deepEqual(
+    resolveJobbermanBoardUrls({ categories: ['admin-office', 'customer-service-support', 'admin-office'] }),
+    [
+      'https://www.jobberman.com/jobs/admin-office/remote',
+      'https://www.jobberman.com/jobs/customer-service-support/remote'
+    ]
+  );
+
+  // CSV string, remoteOnly: false, and pass-through of absolute paths/URLs.
+  assert.deepEqual(
+    resolveJobbermanBoardUrls({ categories: 'software-data, /jobs/it-software', remoteOnly: false }),
+    ['https://www.jobberman.com/jobs/software-data', 'https://www.jobberman.com/jobs/it-software']
+  );
+
+  // Explicit jobsUrls win over categories.
+  assert.deepEqual(
+    resolveJobbermanBoardUrls({ jobsUrls: ['https://www.jobberman.com/jobs/accounting-finance/remote'], categories: ['admin-office'] }),
+    ['https://www.jobberman.com/jobs/accounting-finance/remote']
+  );
+});
+
 test('remotejobsorg scraper normalizes API fields and filters old jobs', async () => {
   class FakeRemoteJobsOrgScraper extends RemoteJobsOrgScraper {
     async fetchJobs() {
@@ -298,6 +337,50 @@ test('remoteok policy keeps recent developer titles and rejects noisy non-dev jo
   }).scrape();
 
   assert.deepEqual(jobs.map((job) => job.title), ['Junior Frontend Developer']);
+});
+
+test('greenhouse scraper normalizes board API jobs and filters profile keywords', async () => {
+  class FakeGreenhouseScraper extends GreenhouseScraper {
+    async fetchJobs() {
+      return [
+        {
+          id: 101,
+          title: 'Customer Support Specialist',
+          absolute_url: 'https://boards.greenhouse.io/acme/jobs/101',
+          location: { name: 'Remote' },
+          offices: [{ name: 'Remote' }],
+          departments: [{ name: 'Customer Experience' }],
+          content: '<p>Support customers through email, chat, Zendesk, and CRM updates.</p>',
+          updated_at: new Date().toISOString(),
+          _greenhouseBoard: { token: 'acme', company: 'Acme' }
+        },
+        {
+          id: 102,
+          title: 'Senior Backend Engineer',
+          absolute_url: 'https://boards.greenhouse.io/acme/jobs/102',
+          location: { name: 'Remote' },
+          content: '<p>Build distributed systems.</p>',
+          updated_at: new Date().toISOString(),
+          _greenhouseBoard: { token: 'acme', company: 'Acme' }
+        }
+      ];
+    }
+  }
+
+  const jobs = await new FakeGreenhouseScraper({ maxJobsPerRun: 10 }, {
+    maxJobsPerRun: 10,
+    remoteOnly: true,
+    includeTitleKeywords: ['customer', 'support', 'assistant', 'admin'],
+    includeKeywords: ['zendesk', 'crm', 'support'],
+    excludeKeywords: ['engineer', 'developer']
+  }).scrape();
+
+  assert.equal(jobs.length, 1);
+  assert.equal(jobs[0].source_site, 'greenhouse');
+  assert.equal(jobs[0].title, 'Customer Support Specialist');
+  assert.equal(jobs[0].company, 'Acme');
+  assert.equal(jobs[0].applicationUrl, 'https://boards.greenhouse.io/acme/jobs/101');
+  assert.match(jobs[0].description, /Zendesk/);
 });
 
 test('remoteok resolver only allows audited downstream adapters', () => {

@@ -1,7 +1,9 @@
 import { compactText, normalizeJobText, stripHtml } from '../utils.js';
 import { BaseScraper } from './baseScraper.js';
 
-const DEFAULT_JOBS_URL = 'https://www.jobberman.com/jobs/customer-service-support/remote';
+const BASE_URL = 'https://www.jobberman.com';
+const DEFAULT_CATEGORY = 'customer-service-support';
+const DEFAULT_JOBS_URL = `${BASE_URL}/jobs/${DEFAULT_CATEGORY}/remote`;
 
 export class JobbermanScraper extends BaseScraper {
   constructor(config, siteConfig = {}) {
@@ -9,10 +11,26 @@ export class JobbermanScraper extends BaseScraper {
   }
 
   async fetchJobs() {
-    const jobsUrl = this.siteConfig.jobsUrl || DEFAULT_JOBS_URL;
-    const html = await this.fetchText(jobsUrl);
-    const links = parseJobbermanListingLinks(html, jobsUrl);
-    await this.log(`Listing page returned ${links.length} job link(s).`);
+    const boardUrls = resolveJobbermanBoardUrls(this.siteConfig);
+    await this.log(`Scanning ${boardUrls.length} Jobberman board(s).`);
+
+    // Collect links across every configured board, de-duplicating shared listings.
+    const links = [];
+    const seen = new Set();
+    for (const boardUrl of boardUrls) {
+      try {
+        const html = await this.fetchText(boardUrl);
+        const boardLinks = parseJobbermanListingLinks(html, boardUrl);
+        await this.log(`[${boardUrl}] returned ${boardLinks.length} job link(s).`);
+        for (const link of boardLinks) {
+          if (seen.has(link.jobUrl)) continue;
+          seen.add(link.jobUrl);
+          links.push(link);
+        }
+      } catch (error) {
+        await this.log(`Skipped board ${boardUrl}: ${error.message}`);
+      }
+    }
 
     const limit = this.resolveMaxJobsPerRun();
     const limitedLinks = limit > 0 ? links.slice(0, limit) : links;
@@ -41,6 +59,45 @@ export class JobbermanScraper extends BaseScraper {
 
 export async function scrapeJobbermanJobs(config, siteConfig = {}) {
   return new JobbermanScraper(config, siteConfig).scrape();
+}
+
+// Resolve the list of Jobberman board listing URLs to scrape for a profile.
+// Precedence: explicit full URLs (`jobsUrls`/`jobsUrl`) > category slugs (`categories`)
+// > the historical single default board. Categories let each profile target the
+// boards that fit their CV (e.g. admin-office, software-data) without code changes.
+export function resolveJobbermanBoardUrls(siteConfig = {}) {
+  const explicit = toUrlList(siteConfig.jobsUrls);
+  if (explicit.length) return dedupe(explicit);
+
+  const categories = toUrlList(siteConfig.categories);
+  if (categories.length) {
+    return dedupe(categories.map((category) => jobbermanBoardUrl(category, siteConfig)));
+  }
+
+  return [siteConfig.jobsUrl || DEFAULT_JOBS_URL];
+}
+
+function jobbermanBoardUrl(category, siteConfig = {}) {
+  const value = String(category || '').trim();
+  if (!value) return DEFAULT_JOBS_URL;
+  // Allow a fully-qualified URL or absolute path to pass through untouched.
+  if (/^https?:\/\//i.test(value)) return value;
+  if (value.startsWith('/')) return `${BASE_URL}${value}`;
+
+  const slug = value.replace(/^\/+|\/+$/g, '');
+  // Remote-only is the default; opt out with remoteOnly: false to include onsite roles.
+  const suffix = siteConfig.remoteOnly === false ? '' : '/remote';
+  return `${BASE_URL}/jobs/${slug}${suffix}`;
+}
+
+function toUrlList(value) {
+  if (Array.isArray(value)) return value.map((item) => String(item || '').trim()).filter(Boolean);
+  if (typeof value === 'string') return value.split(',').map((item) => item.trim()).filter(Boolean);
+  return [];
+}
+
+function dedupe(items) {
+  return [...new Set(items)];
 }
 
 export function parseJobbermanListingLinks(html, baseUrl = DEFAULT_JOBS_URL) {
