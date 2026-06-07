@@ -418,6 +418,14 @@ test('shared ATS resolver separates audited adapters from manual-review platform
     pickResolverFields(classifyApplyDestination('https://jobs.smartrecruiters.com/acme/123')),
     { supported: false, adapter: 'smartrecruiters', reason: 'adapter-not-audited', kind: 'ats', audited: false }
   );
+  assert.deepEqual(
+    pickResolverFields(classifyApplyDestination('https://apply.workable.com/acme/j/123')),
+    { supported: true, adapter: 'workable', reason: 'supported-audited-adapter', kind: 'ats', audited: true }
+  );
+  assert.deepEqual(
+    pickResolverFields(classifyApplyDestination('https://jobs.ashbyhq.com/acme/123/application')),
+    { supported: true, adapter: 'ashby', reason: 'supported-audited-adapter', kind: 'ats', audited: true }
+  );
   assert.equal(detectApplyPlatform('https://apply.workable.com/acme/j/123')?.adapter, 'workable');
   assert.equal(shouldAllowGatewayHandoff(classifyApplyDestination('https://boards.greenhouse.io/acme/jobs/123'), { testMode: true }), true);
   assert.equal(shouldAllowGatewayHandoff(classifyApplyDestination('https://boards.greenhouse.io/acme/jobs/123'), { testMode: false }), false);

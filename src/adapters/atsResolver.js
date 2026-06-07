@@ -61,14 +61,14 @@ const PLATFORM_RULES = [
     adapter: 'workable',
     label: 'Workable',
     kind: 'ats',
-    audited: false,
+    audited: true,
     patterns: [/apply\.workable\.com/i, /jobs\.workable\.com/i]
   },
   {
     adapter: 'ashby',
     label: 'Ashby',
     kind: 'ats',
-    audited: false,
+    audited: true,
     patterns: [/jobs\.ashbyhq\.com/i, /app\.ashbyhq\.com/i]
   },
   {
