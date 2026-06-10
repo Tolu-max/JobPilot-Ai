@@ -58,6 +58,18 @@ export async function localMatchJob(job, candidateProfile, config = {}) {
   const reasons = [];
   const matchedSkills = [];
   const missingSkills = [];
+  const roleFit = assessProfileRoleFit(job, candidateProfile, config);
+
+  if (!roleFit.allowed) {
+    return {
+      score: 0,
+      recommendation: 'ignore',
+      matchedSkills,
+      missingSkills: candidateProfile.skills || [],
+      reasons: roleFit.reasons
+    };
+  }
+
   const hardFilterReasons = findHardFilters(text, candidateProfile);
 
   if (hardFilterReasons.length > 0) {
@@ -70,7 +82,7 @@ export async function localMatchJob(job, candidateProfile, config = {}) {
     };
   }
 
-  const titleExclusionReasons = findTitleExclusions(job.title || '', candidateProfile);
+  const titleExclusionReasons = findTitleExclusions(job.title || '', candidateProfile, text);
   if (titleExclusionReasons.length > 0) {
     return {
       score: 0,
@@ -91,6 +103,141 @@ export async function localMatchJob(job, candidateProfile, config = {}) {
     missingSkills: aiScore.missingSkills || [],
     reasons: aiScore.reasons || ['AI-powered job matching']
   };
+}
+
+export function assessProfileRoleFit(job, candidateProfile = {}, config = {}) {
+  const profileName = String(config.profileName || candidateProfile.profileName || candidateProfile.name || '').toLowerCase();
+  const title = compactText(job?.title || '').toLowerCase();
+  const text = buildJobText(job).toLowerCase();
+  const corpus = `${title} ${text}`;
+  const profileWithPreferences = mergeProfilePreferences(candidateProfile, config.preferences);
+
+  if (isToluProfile(profileName, profileWithPreferences)) {
+    return assessToluRoleFit(title, corpus);
+  }
+
+  if (isSisterProfile(profileName, profileWithPreferences)) {
+    return assessSisterRoleFit(corpus, profileWithPreferences);
+  }
+
+  return { allowed: true, reasons: [] };
+}
+
+function mergeProfilePreferences(profile = {}, preferences = {}) {
+  return {
+    ...profile,
+    skills: uniqueCompact(profile.skills, preferences.skills),
+    preferredRoles: uniqueCompact(profile.preferredRoles, preferences.preferredRoles),
+    secondaryRoles: uniqueCompact(profile.secondaryRoles, preferences.secondaryRoles),
+    allowedRoleCategories: uniqueCompact(profile.allowedRoleCategories, preferences.allowedRoleCategories),
+    titleExclusions: uniqueCompact(profile.titleExclusions, preferences.titleExclusions),
+    hardFilters: uniqueCompact(profile.hardFilters, preferences.hardFilters),
+    exclusions: uniqueCompact(profile.exclusions, preferences.exclusions)
+  };
+}
+
+function uniqueCompact(...sources) {
+  const out = new Set();
+  for (const source of sources) {
+    if (!Array.isArray(source)) continue;
+    for (const value of source) {
+      const normalized = compactText(String(value || ''));
+      if (normalized) out.add(normalized);
+    }
+  }
+  return Array.from(out);
+}
+
+function isToluProfile(profileName, profile = {}) {
+  if (profileName.includes('tolu') || profileName.includes('toluwalope')) return true;
+  const skills = (profile.skills || []).join(' ').toLowerCase();
+  const roles = (profile.preferredRoles || []).join(' ').toLowerCase();
+  const summary = String(profile.userProfileSummary || profile.summary || '').toLowerCase();
+  return /\b(seo|shopify|wordpress|web developer|website administrator|technical seo|javascript|e-?commerce)\b/i.test(`${skills} ${roles} ${summary}`);
+}
+
+function isSisterProfile(profileName, profile = {}) {
+  if (profileName.includes('sister')) return true;
+  const skills = (profile.skills || []).join(' ').toLowerCase();
+  const roles = (profile.preferredRoles || []).join(' ').toLowerCase();
+  return /\b(customer support|virtual assistant|administrative assistant|crm assistant)\b/i.test(`${skills} ${roles}`);
+}
+
+function assessToluRoleFit(title, corpus) {
+  const genericAdminRole = /\b(admin|administrative|executive|personal|virtual|office|operations|client|project|broker|inventory|front office)\s+(assistant|support|coordinator|administrator|specialist|clerk)\b|\b(virtual assistant|customer support|customer service|data entry|appointment setter|receptionist|front desk|office assistant|office admin|calendar management|client communications?)\b/i;
+  const technicalWebEvidence = /\b(seo|technical seo|shopify|wordpress|webflow|website|web site|web admin|website admin|website administrator|web developer|frontend|front end|backend|full stack|full-stack|javascript|node\.?js|html|css|cms|e-?commerce)\b/i;
+  const titleTechnicalEvidence = /\b(seo|technical seo|shopify|wordpress|webflow|website|web site|web admin|website admin|website administrator|web developer|frontend|front end|backend|full stack|full-stack|javascript|node\.?js|html|css|cms|e-?commerce)\b/i;
+  const salesOrSupportTitle = /\b(sales support|sales associate|sales representative|sales development|business development|sdr|bdr|telemarketer|telemarketing|cold calling|support associate|support specialist|customer support|customer service|client support|client success)\b/i;
+
+  if (genericAdminRole.test(corpus) && !technicalWebEvidence.test(corpus)) {
+    return {
+      allowed: false,
+      reasons: ['Profile role QA: Tolu is limited to web, SEO, Shopify, WordPress, JavaScript, or technical website roles; generic admin/support title has no technical website evidence.']
+    };
+  }
+
+  if (salesOrSupportTitle.test(title) && !titleTechnicalEvidence.test(title)) {
+    return {
+      allowed: false,
+      reasons: ['Profile role QA: Tolu should not advance sales/support-heavy roles unless the title is clearly web, SEO, Shopify, WordPress, or developer-focused.']
+    };
+  }
+
+  if (/\b(bookkeeper|bookkeeping|quickbooks|xero|accountant|accounts payable|accounts receivable|medical billing|legal|paralegal|attorney|cold calling|telemarketing|b2b sales|sales representative|appointment setter|underwriter|loan processing|credentialing|contracting|compliance administrator|case management|property management|real estate assistant)\b/i.test(corpus) && !technicalWebEvidence.test(corpus)) {
+    return {
+      allowed: false,
+      reasons: ['Profile role QA: Tolu role is outside web/SEO/Shopify/WordPress scope.']
+    };
+  }
+
+  return { allowed: true, reasons: [] };
+}
+
+function assessSisterRoleFit(corpus, profile = {}) {
+  const allowed = new Set([
+    ...normalizeList(profile.allowedRoleCategories),
+    ...normalizeList(profile.skills),
+    ...normalizeList(profile.preferredRoles),
+    ...normalizeList(profile.secondaryRoles)
+  ]);
+  const hasAllowed = (...patterns) => patterns.some((pattern) => Array.from(allowed).some((item) => pattern.test(item)));
+  const blocks = [
+    {
+      pattern: /\b(legal assistant|paralegal|law firm|attorney|legal case|case law)\b/i,
+      allowed: hasAllowed(/legal|paralegal|law/i),
+      reason: 'Profile role QA: legal roles are not supported for this profile.'
+    },
+    {
+      pattern: /\b(medical billing|medical coder|clinical|healthcare claims|insurance claims)\b/i,
+      allowed: hasAllowed(/medical|healthcare|insurance/i),
+      reason: 'Profile role QA: medical or insurance specialist roles are not supported for this profile.'
+    },
+    {
+      pattern: /\b(bookkeeper|bookkeeping|quickbooks|xero|accountant|accounting clerk|accounts payable|accounts receivable)\b/i,
+      allowed: hasAllowed(/bookkeeping|financial|quickbooks|xero|accounting/i),
+      reason: 'Profile role QA: bookkeeping/accounting roles need explicit profile support.'
+    },
+    {
+      pattern: /\b(cold calling|telemarketing|outbound sales|commission only|closing sales|door to door)\b/i,
+      allowed: hasAllowed(/sales|cold calling|telemarketing|outbound|lead generation|appointment/i),
+      reason: 'Profile role QA: hard sales/cold calling roles need explicit profile support.'
+    },
+    {
+      pattern: /\b(developer|engineer|software|devops|qa automation|frontend|backend|full stack|full-stack)\b/i,
+      allowed: hasAllowed(/developer|software|technical|automation|web/i),
+      reason: 'Profile role QA: technical developer/engineering roles are not supported for this profile.'
+    }
+  ];
+
+  const hit = blocks.find((block) => block.pattern.test(corpus) && !block.allowed);
+  if (hit) return { allowed: false, reasons: [hit.reason] };
+  return { allowed: true, reasons: [] };
+}
+
+function normalizeList(value) {
+  return Array.isArray(value)
+    ? value.map((item) => compactText(String(item || '')).toLowerCase()).filter(Boolean)
+    : [];
 }
 
 async function getAiScore(job, candidateProfile, config) {
@@ -117,11 +264,13 @@ async function getAiScore(job, candidateProfile, config) {
     const score = clampScoreInt(parsed.score);
     const matchedSkills = Array.isArray(parsed.matched_skills) ? parsed.matched_skills.slice(0, 12) : [];
     const missingSkills = Array.isArray(parsed.missing_skills) ? parsed.missing_skills.slice(0, 12) : [];
-    const reasons = Array.isArray(parsed.reasons) ? parsed.reasons.slice(0, 6) : ['AI scoring completed'];
+    const reasons = Array.isArray(parsed.reasons) && parsed.reasons.length > 0 
+      ? parsed.reasons.slice(0, 6) 
+      : ['AI returned empty reasons. Scoring completed based on provided logic.'];
 
-    // Reject ungrounded responses — model must produce at least one matched OR missing skill
-    if (matchedSkills.length === 0 && missingSkills.length === 0) {
-      throw new Error('AI returned no skill grounding (matched_skills and missing_skills both empty)');
+    // If score is completely invalid, we fall back. Otherwise, we trust it.
+    if (!Number.isFinite(Number.parseInt(parsed.score, 10))) {
+      throw new Error('AI returned invalid score format');
     }
 
     return { score, matchedSkills, missingSkills, reasons };
@@ -193,6 +342,9 @@ Hard rules — apply BEFORE rubric:
 - If the job clearly requires years of experience > candidate's years of experience + 2 → cap at 35.
 
 Be specific in "reasons" — name the role, the matching/missing skill, or the seniority mismatch. Do NOT invent skills not present in the CV.
+You MUST provide at least one reason in the "reasons" array, even if the candidate is a complete mismatch.
+
+${profileSpecificScoringRules(config, candidateProfile)}
 
 === OUTPUT ===
 Return ONLY this JSON (no prose, no markdown):
@@ -200,8 +352,17 @@ Return ONLY this JSON (no prose, no markdown):
   "score": <integer 0-100>,
   "matched_skills": [<skills from the CV that the job explicitly asks for, max 8>],
   "missing_skills": [<skills the job asks for but the CV does NOT show, max 6>],
-  "reasons": [<2-4 short concrete reasons grounded in CV + job text>]
+  "reasons": [<2-4 short concrete reasons grounded in CV + job text, AT LEAST ONE REASON IS REQUIRED>]
 }`;
+}
+
+function profileSpecificScoringRules(config = {}, candidateProfile = {}) {
+  const profileName = String(config.profileName || candidateProfile.profileName || candidateProfile.name || '').toLowerCase();
+  if (!profileName.includes('sister')) return '';
+
+  return `Additional Sister-specific hard rules:
+- If the role is primarily SDR/BDR/outbound sales/cold calling/quota-carrying SaaS sales, cap score at 45 unless the CV shows direct cold-calling, quota, SaaS sales, Salesforce, or SDR/BDR work history evidence.
+- If the role is primarily standalone social media management/coordinator/content creator, cap score at 45 unless the CV shows hands-on social media campaign/platform/content-calendar/analytics ownership, not just general communication or admin support.`;
 }
 
 function uniqueList(...sources) {
@@ -347,11 +508,28 @@ function findHardFilters(text, profile) {
     .map((filter) => `Hard filter matched: ${filter}`);
 }
 
-function findTitleExclusions(title, profile) {
+function findTitleExclusions(title, profile, fullText = '') {
   const titleExclusions = profile.titleExclusions || [];
   const titleLower = compactText(title).toLowerCase();
+  const corpus = `${titleLower} ${compactText(fullText).toLowerCase()}`;
+  const technicalWebEvidence = /\b(seo|technical seo|shopify|wordpress|webflow|website|web site|web admin|website admin|website administrator|web developer|frontend|front end|backend|full stack|full-stack|javascript|node\.?js|html|css|cms|e-?commerce)\b/i;
+  const conditionalToluExclusions = new Set([
+    'administrative assistant',
+    'virtual assistant',
+    'executive assistant',
+    'personal assistant',
+    'customer support',
+    'customer service',
+    'appointment setter',
+    'data entry'
+  ]);
   return titleExclusions
-    .filter((kw) => kw && titleLower.includes(compactText(kw).toLowerCase()))
+    .filter((kw) => {
+      const normalized = compactText(kw).toLowerCase();
+      if (!normalized || !titleLower.includes(normalized)) return false;
+      if (conditionalToluExclusions.has(normalized) && technicalWebEvidence.test(corpus)) return false;
+      return true;
+    })
     .map((kw) => `Title exclusion matched: ${kw}`);
 }
 
@@ -524,6 +702,8 @@ function capitalize(value) {
 export function recommendationForScore(score) {
   if (score >= 95) return 'instant_apply';
   if (score >= 88) return 'auto_apply';
-  if (score >= 75) return 'review';
+  // Align review threshold with the prompt rubric:
+  // 70-84 is a good adjacent fit and should not be dropped as ignore.
+  if (score >= 70) return 'review';
   return 'ignore';
 }

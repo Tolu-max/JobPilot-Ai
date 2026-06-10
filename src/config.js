@@ -70,7 +70,7 @@ export function buildConfig(argv = process.argv) {
     e2eTestMode,
     platformScrapeMode: normalizePlatformScrapeMode(process.env.TEST_PLATFORM_SCRAPE_MODE || 'mock'),
     aiMode,
-    aiProvider: normalizeAiProvider(process.env.AI_PROVIDER || process.env.AI_LAYER || 'gemini'),
+    aiProvider: normalizeAiProvider(process.env.AI_PROVIDER || process.env.AI_LAYER || 'deepseek'),
     aiDisabledProviders: process.env.AI_DISABLED_PROVIDERS || process.env.DISABLED_AI_PROVIDERS || '',
     geminiApiKey: process.env.GEMINI_API_KEY || '',
     geminiModel: process.env.GEMINI_MODEL || 'gemini-2.5-flash-lite',

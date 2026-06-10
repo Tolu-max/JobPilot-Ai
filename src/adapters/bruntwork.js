@@ -22,6 +22,8 @@
 //     - "Already applied" / success page  → CONFIRMED
 //     - Anything else                     → INCONCLUSIVE
 
+import fs from 'node:fs/promises';
+import path from 'node:path';
 import { chromium } from 'playwright';
 import { FormStep, Proof, noProof, proofFound } from './types.js';
 import { request as aiRequest, TaskTypes } from '../aiRouter.js';
@@ -119,6 +121,7 @@ async function fillDetailsStep(page, ctx) {
   // ONLY fill: Resume upload, Job questions (AI-generated), and other empty fields.
 
   const cv = ctx.candidate || {};
+  const telemetry = getTelemetry(ctx);
 
   // safeFill: only fill if field is currently empty
   const safeFill = async (locator, value) => {
@@ -140,9 +143,15 @@ async function fillDetailsStep(page, ctx) {
   try {
     if (ctx.resumePath) {
       const fileInputs = await page.locator('input[type="file"]').all();
+      telemetry.resume.attempted = fileInputs.length > 0;
+      telemetry.resume.path = ctx.resumePath;
+      telemetry.resume.inputsDetected = fileInputs.length;
       for (const fi of fileInputs) {
-        await fi.setInputFiles(ctx.resumePath).catch(() => {});
+        const uploaded = await fi.setInputFiles(ctx.resumePath).then(() => true).catch(() => false);
+        if (uploaded) telemetry.resume.uploadsSucceeded += 1;
       }
+      telemetry.resume.uploaded = telemetry.resume.uploadsSucceeded > 0;
+      console.log(`[bruntwork] Resume upload: detected=${telemetry.resume.inputsDetected}, succeeded=${telemetry.resume.uploadsSucceeded}`);
       await page.waitForTimeout(2000);
     }
   } catch { /* ignore */ }
@@ -167,27 +176,45 @@ async function fillDetailsStep(page, ctx) {
 
     if (!question || question.trim().length === 0) continue; // no question found, skip
 
-    const answer = await answerApplicationQuestion(question, ctx, cv);
+    const answerResult = await answerApplicationQuestion(question, ctx, cv);
+    const answer = answerResult.answer;
     if (answer && answer.length > 20) {
-      await ta.fill(answer).catch(() => {});
+      const filled = await ta.fill(answer).then(() => true).catch(() => false);
+      if (filled) {
+        telemetry.questions.answered += 1;
+        telemetry.questions.items.push({
+          question: compactQuestion(question),
+          provider: answerResult.provider,
+          usedFallback: answerResult.usedFallback,
+          validationReplaced: answerResult.validationReplaced,
+          answerPreview: compactAnswer(answer)
+        });
+        console.log(`[bruntwork] Answered question ${telemetry.questions.answered}/${textareas.length} via ${answerResult.provider}${answerResult.usedFallback ? ' (fallback)' : ''}: ${compactQuestion(question)}`);
+      }
       await page.waitForTimeout(150);
     }
   }
+  telemetry.questions.visible = textareas.length;
 
   // Voice recording link
-  await safeFill(
+  const voiceFilled = await safeFill(
     page.locator('input[placeholder*="voice" i], input[placeholder*="recording" i], input[placeholder*="audio" i]'),
     cv.voiceRecordingUrl || ctx.config?.voiceRecordingUrl || ''
   );
+  if (voiceFilled) telemetry.fields.voiceRecordingFilled += 1;
 
   // Remaining selects (RAM dropdown etc.) — pick first non-empty option
   try {
     const allSelects = await page.locator('select:visible').all();
+    telemetry.fields.selectsSeen = allSelects.length;
     for (const sel of allSelects) {
       const cur = await sel.inputValue().catch(() => '');
       if (cur && cur !== '') continue;
       const opts = await sel.evaluate((el) => Array.from(el.options).map((o) => o.value).filter((v) => v && v !== '0'));
-      if (opts.length > 0) await sel.selectOption(opts[0]).catch(() => {});
+      if (opts.length > 0) {
+        const selected = await sel.selectOption(opts[0]).then(() => true).catch(() => false);
+        if (selected) telemetry.fields.selectsFilled += 1;
+      }
     }
   } catch { /* ignore */ }
 
@@ -195,14 +222,18 @@ async function fillDetailsStep(page, ctx) {
   const currentRate = String(cv.currentSalary || ctx.config?.salary?.current || 800);
   const expectedRate = String(cv.expectedSalary || ctx.config?.salary?.expected || 1200);
   const numInputs = await page.locator('input[type="number"]:visible').all();
+  telemetry.fields.numberInputsSeen = numInputs.length;
   let nIdx = 0;
   for (const ni of numInputs) {
     const cur = await ni.inputValue().catch(() => '');
     if (cur && cur !== '' && cur !== '0') { nIdx += 1; continue; }
-    await ni.fill(nIdx === 0 ? currentRate : expectedRate).catch(() => {});
+    const filled = await ni.fill(nIdx === 0 ? currentRate : expectedRate).then(() => true).catch(() => false);
+    if (filled) telemetry.fields.numberInputsFilled += 1;
     nIdx += 1;
   }
 
+  telemetry.fields.completedAt = new Date().toISOString();
+  await persistTelemetry(ctx);
   await page.waitForTimeout(800);
 }
 
@@ -227,6 +258,7 @@ ${cvSummary}
 
 Instructions:
 - Write 2-4 sentences maximum.
+- Start the answer immediately. Do NOT use conversational filler or preambles like "Here is my answer", "Based on the CV", or "As an AI".
 - No bullet points, no dashes, no lists.
 - Do not invent skills, tools, degrees, years of experience, countries, or certifications.
 - If the CV does not prove the requested exact experience, say that the exact experience is not documented and mention transferable skills instead.
@@ -253,10 +285,20 @@ Instructions:
       console.warn(`[bruntwork] Replaced unsupported answer claim for "${String(question).slice(0, 50)}...": ${validated.reason}`);
     }
 
-    return validated.answer || fallback;
+    return {
+      answer: validated.answer || fallback,
+      provider: aiResult.modelUsed || 'local-fallback',
+      usedFallback: Boolean(aiResult.fallbackUsed),
+      validationReplaced: !validated.ok
+    };
   } catch (err) {
     console.warn(`[bruntwork] AI answer failed, using grounded fallback: ${err.message}`);
-    return fallback;
+    return {
+      answer: fallback,
+      provider: 'local-fallback',
+      usedFallback: true,
+      validationReplaced: false
+    };
   }
 }
 
@@ -293,7 +335,8 @@ async function clickContinue(page, ctx) {
   await btn.click();
 
   // Wait for URL to change to /applications/ (BruntWork SPA takes time to transition)
-  const urlChanged = await page.waitForURL(/\/applications\//, { timeout: 15000 }).then(() => true).catch(() => false);
+  const continueWaitMs = clampNumber(process.env.BRUNTWORK_CONTINUE_WAIT_MS, 60000, 15000, 80000);
+  const urlChanged = await page.waitForURL(/\/applications\//, { timeout: continueWaitMs }).then(() => true).catch(() => false);
   if (urlChanged) {
     // Give the page time to render after URL change
     await page.waitForTimeout(2000);
@@ -301,7 +344,7 @@ async function clickContinue(page, ctx) {
   }
 
   // Fallback: use the old transition detection
-  const transitioned = await waitForTransition(page, beforeUrl, FormStep.DETAILS);
+  const transitioned = await waitForTransition(page, beforeUrl, FormStep.DETAILS, Math.min(continueWaitMs, 30000));
   return { step: transitioned ? FormStep.DETAILS : FormStep.EMAIL, advanced: transitioned, reason: transitioned ? '' : 'No transition observed after Continue.' };
 }
 
@@ -320,11 +363,27 @@ async function clickSubmitApplication(page, ctx) {
   // If it's still disabled, that means the bot failed to fill some required field.
   // Wait up to 8s for it to enable (some validations are async).
   const deadline = Date.now() + 8000;
+  let everEnabled = false;
   while (Date.now() < deadline) {
-    if (!(await btn.isDisabled().catch(() => true))) break;
+    const disabled = await btn.isDisabled().catch(() => true);
+    if (!disabled) {
+      everEnabled = true;
+      break;
+    }
     await page.waitForTimeout(500);
   }
   if (await btn.isDisabled().catch(() => true)) {
+    if (everEnabled) {
+      const pendingSubmission = await detectPendingSubmission(page, btn);
+      if (pendingSubmission.pending) {
+        return {
+          step: FormStep.SUBMITTED,
+          advanced: true,
+          reason: pendingSubmission.reason,
+          pendingSubmission: true
+        };
+      }
+    }
     const requiredIssues = await collectVisibleRequiredIssues(page);
     return {
       step: FormStep.DETAILS,
@@ -335,10 +394,29 @@ async function clickSubmitApplication(page, ctx) {
   }
   await btn.scrollIntoViewIfNeeded().catch(() => {});
   await btn.click();
-  const transitioned = await waitForTransition(page, page.url(), FormStep.SUBMITTED);
+  const beforeUrl = page.url();
+  const transitioned = await waitForTransition(page, beforeUrl, FormStep.SUBMITTED, 30000);
+  if (transitioned) {
+    return { step: FormStep.SUBMITTED, advanced: true, reason: '' };
+  }
+
+  const pendingSubmission = await detectPendingSubmission(page, btn);
+  if (pendingSubmission.pending) {
+    return {
+      step: FormStep.SUBMITTED,
+      advanced: true,
+      reason: pendingSubmission.reason,
+      pendingSubmission: true
+    };
+  }
+
   // Even if no transition was detected, CAPTCHA may have intercepted. The caller
   // (automation.js) will run a CAPTCHA pass and then re-check isSubmitted.
-  return { step: transitioned ? FormStep.SUBMITTED : FormStep.DETAILS, advanced: transitioned, reason: transitioned ? '' : 'No SUBMITTED markers seen yet — CAPTCHA or async submit may still be in flight.' };
+  return {
+    step: FormStep.DETAILS,
+    advanced: false,
+    reason: 'No SUBMITTED markers seen yet — CAPTCHA or async submit may still be in flight.'
+  };
 }
 
 async function collectVisibleRequiredIssues(page) {
@@ -404,8 +482,8 @@ function detailsReason(baseReason, requiredIssues = []) {
   return `${baseReason} Visible incomplete/invalid fields: ${summary || 'unknown fields'}.`;
 }
 
-async function waitForTransition(page, beforeUrl, expectedStep) {
-  const deadline = Date.now() + 20000;
+async function waitForTransition(page, beforeUrl, expectedStep, timeoutMs = 20000) {
+  const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     await page.waitForTimeout(700);
     const cur = await getCurrentStep(page);
@@ -414,6 +492,51 @@ async function waitForTransition(page, beforeUrl, expectedStep) {
     if (expectedStep === FormStep.DETAILS && page.url() !== beforeUrl && cur !== FormStep.EMAIL) return true;
   }
   return false;
+}
+
+async function detectPendingSubmission(page, submitButton) {
+  await page.waitForLoadState('networkidle', { timeout: 12000 }).catch(() => {});
+  await page.waitForTimeout(2500);
+
+  const proof = await isSubmitted(page);
+  if (proof.submitted) {
+    return {
+      pending: true,
+      reason: `Submission markers detected after async settle: ${proof.markers.join(', ')}`
+    };
+  }
+
+  const submitVisible = await submitButton.isVisible({ timeout: 1000 }).catch(() => false);
+  const submitDisabled = await submitButton.isDisabled().catch(() => false);
+  const requiredIssues = await collectVisibleRequiredIssues(page);
+  const blockingCaptcha = await page
+    .locator('iframe[src*="recaptcha"], iframe[src*="hcaptcha"], .g-recaptcha, .h-captcha')
+    .first()
+    .isVisible({ timeout: 800 })
+    .catch(() => false);
+
+  const likelySubmitted = (!submitVisible || submitDisabled) && requiredIssues.length === 0 && !blockingCaptcha;
+  if (!likelySubmitted) {
+    return { pending: false, reason: '' };
+  }
+
+  const currentUrl = page.url();
+  const urlChanged = currentUrl !== '';
+  const routeLooksAdvanced = /\/applications\/[A-Za-z0-9-]+(?:\/enhance)?/i.test(currentUrl);
+  if (routeLooksAdvanced || urlChanged) {
+    return {
+      pending: true,
+      reason: 'Submit control is no longer actionable and the Bruntwork application page appears to have advanced; handing off to ground-truth re-verification.'
+    };
+  }
+
+  return { pending: false, reason: '' };
+}
+
+function clampNumber(value, fallback, min, max) {
+  const parsed = Number.parseInt(value, 10);
+  const n = Number.isFinite(parsed) ? parsed : fallback;
+  return Math.min(Math.max(n, min), max);
 }
 
 // --- submission proof -------------------------------------------------------
@@ -437,7 +560,7 @@ async function isSubmitted(page) {
 
 // --- ground-truth re-verification -------------------------------------------
 
-async function verifySubmission(ctx) {
+async function verifySubmission(ctx, options = {}) {
   const job = ctx.job || {};
   const email = ctx.candidate?.email || ctx.config?.applicantEmail || '';
   const jobUrl = job.applicationUrl || '';
@@ -447,9 +570,14 @@ async function verifySubmission(ctx) {
   // Make sure we hit the /apply form route, not the JD page
   const applyUrl = /\/apply(\?|$)/.test(jobUrl) ? jobUrl : jobUrl.replace(/\/?$/, '/apply');
 
-  const browser = await chromium.launch({ headless: true });
-  const ctxBrowser = await browser.newContext();
-  const page = await ctxBrowser.newPage();
+  let browser;
+  let ctxBrowser;
+  let page = options.page;
+  if (!page) {
+    browser = await chromium.launch({ headless: true });
+    ctxBrowser = await browser.newContext();
+    page = await ctxBrowser.newPage();
+  }
   try {
     await page.goto(applyUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
     await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
@@ -467,26 +595,57 @@ async function verifySubmission(ctx) {
       return { proof: Proof.INCONCLUSIVE, markers: [], reason: 'No Continue button on apply URL during re-verification.' };
     }
     await cont.click();
+
+    const transitionedToApplication = typeof page.waitForURL === 'function'
+      ? await page.waitForURL(/\/applications\//, { timeout: 15000 }).then(() => true).catch(() => false)
+      : /\/applications\//.test(page.url());
+    if (!transitionedToApplication) {
+      const successBody = await page.locator('body').innerText({ timeout: 3000 }).catch(() => '');
+      if (SUCCESS_TEXT_PATTERN.test(successBody)) {
+        return { proof: Proof.CONFIRMED, markers: ['re-verify body matched already-submitted phrase before URL transition'], reason: '' };
+      }
+    }
+
     // Wait for SPA to settle
     await page.waitForLoadState('networkidle', { timeout: 12000 }).catch(() => {});
-    await page.waitForTimeout(3500);
+    await page.waitForTimeout(5000);
 
+    const afterUrl = page.url();
     const body = await page.locator('body').innerText({ timeout: 3000 }).catch(() => '');
 
     // Strong CONFIRMED markers: BruntWork tells us we've already applied / submitted
     if (/already (submitted|applied)|application (was )?successfully submitted|we (have|'ve|ve) received your application|thank you for your application|you have already submitted|enhance your application|our team is reviewing your profile|strengthen your application/i.test(body)) {
       return { proof: Proof.CONFIRMED, markers: ['re-verify body matched already-submitted phrase'], reason: '' };
     }
+    if (/\/applications\/[^/]+\/enhance(?:[/?#]|$)/i.test(afterUrl)) {
+      return { proof: Proof.CONFIRMED, markers: [`re-verify landed on enhance route: ${afterUrl}`], reason: '' };
+    }
 
     // Strong NOT_SUBMITTED markers: BruntWork dropped us back into the apply form
     //   - Submit Application visible OR DETAILS step with empty/draft form
     const submitVisible = await page.getByRole('button', { name: /submit\s*application/i }).first().isVisible({ timeout: 1500 }).catch(() => false);
     const step = await getCurrentStep(page);
-    if (submitVisible || step === FormStep.DETAILS) {
+    const emptyRequiredFields = await countEmptyRequiredApplicationFields(page);
+    if (submitVisible || emptyRequiredFields > 0) {
       return {
         proof: Proof.NOT_SUBMITTED,
-        markers: [`re-verify landed on ${step} step with submit visible=${submitVisible}`],
-        reason: 'Re-entering the same email returned us to the application form — submission did not stick.'
+        markers: [`re-verify landed on ${step} step with submit visible=${submitVisible}, empty required fields=${emptyRequiredFields}`],
+        reason: 'Re-entering the same email returned us to an editable application form - submission did not stick.'
+      };
+    }
+
+    if (step === FormStep.DETAILS) {
+      if (/\/applications\/[^/]+(?:[/?#]|$)/i.test(afterUrl) && !submitVisible && emptyRequiredFields === 0) {
+        return {
+          proof: Proof.CONFIRMED,
+          markers: [`re-verify landed on non-editable application route: ${afterUrl}`],
+          reason: ''
+        };
+      }
+      return {
+        proof: Proof.INCONCLUSIVE,
+        markers: [`re-verify landed on ${step} step without submit control or empty required fields`],
+        reason: 'Re-verification reached a BruntWork application page, but it was not clearly an editable unsubmitted form.'
       };
     }
 
@@ -499,14 +658,100 @@ async function verifySubmission(ctx) {
   } catch (err) {
     return { proof: Proof.INCONCLUSIVE, markers: [], reason: `Re-verification error: ${err.message}` };
   } finally {
-    await ctxBrowser.close().catch(() => {});
-    await browser.close().catch(() => {});
+    await ctxBrowser?.close().catch(() => {});
+    await browser?.close().catch(() => {});
   }
+}
+
+async function countEmptyRequiredApplicationFields(page) {
+  return page.evaluate(() => {
+    const visible = (el) => {
+      const rect = el.getBoundingClientRect();
+      const style = window.getComputedStyle(el);
+      return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+    };
+    const optionalLike = /optional|voice|audio|video|loom|photo|screenshot|speed.?test|internet|device|enhance|strengthen/i;
+    return Array.from(document.querySelectorAll('input, textarea, select'))
+      .filter((el) => visible(el) && !el.disabled)
+      .filter((el) => {
+        const type = (el.getAttribute('type') || el.tagName).toLowerCase();
+        const key = `${el.getAttribute('name') || ''} ${el.getAttribute('id') || ''}`;
+        if (/captcha|recaptcha|h-captcha/i.test(key)) return false;
+        if (['hidden', 'submit', 'button'].includes(type)) return false;
+        const label = [
+          el.getAttribute('aria-label'),
+          el.getAttribute('placeholder'),
+          el.getAttribute('name'),
+          el.getAttribute('id'),
+          el.closest('label, div')?.textContent
+        ].filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
+        const value = type === 'file' ? (el.files?.length ? 'uploaded' : '') : (el.value || '');
+        return !value.trim() && (el.required || /\brequired\b/i.test(label)) && !optionalLike.test(label);
+      }).length;
+  }).catch(() => 0);
+}
+
+function getTelemetry(ctx) {
+  if (!ctx.__bruntworkTelemetry) {
+    ctx.__bruntworkTelemetry = {
+      site: NAME,
+      jobTitle: ctx.job?.title || '',
+      profileName: ctx.config?.profileName || 'default',
+      updatedAt: new Date().toISOString(),
+      resume: {
+        attempted: false,
+        path: '',
+        inputsDetected: 0,
+        uploadsSucceeded: 0,
+        uploaded: false
+      },
+      questions: {
+        visible: 0,
+        answered: 0,
+        items: []
+      },
+      fields: {
+        voiceRecordingFilled: 0,
+        selectsSeen: 0,
+        selectsFilled: 0,
+        numberInputsSeen: 0,
+        numberInputsFilled: 0,
+        completedAt: ''
+      }
+    };
+  }
+  ctx.__bruntworkTelemetry.updatedAt = new Date().toISOString();
+  return ctx.__bruntworkTelemetry;
+}
+
+async function persistTelemetry(ctx) {
+  if (!ctx?.debugDir) return;
+  const telemetry = getTelemetry(ctx);
+  try {
+    await fs.mkdir(ctx.debugDir, { recursive: true });
+    await fs.writeFile(
+      path.join(ctx.debugDir, 'bruntwork_telemetry.json'),
+      `${JSON.stringify(telemetry, null, 2)}\n`,
+      'utf8'
+    );
+  } catch {
+    // Debug telemetry should never break the application flow.
+  }
+}
+
+function compactQuestion(text) {
+  return String(text || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+}
+
+function compactAnswer(text) {
+  return String(text || '').replace(/\s+/g, ' ').trim().slice(0, 200);
 }
 
 export const bruntworkAdapter = Object.freeze({
   name: NAME,
   matches,
+  flowTimeoutMs: 360000,
+  advanceTimeoutMs: 90000,
   getCurrentStep,
   fillStep,
   advance,
