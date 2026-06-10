@@ -390,6 +390,14 @@ function defaultSitesConfig() {
       maxJobsPerRun: 10,
       cooldownMinutes: 1,
       autoApplyEnabled: true
+    },
+    ashby: {
+      enabled: true,
+      priority: 50,
+      maxJobsPerRun: 10,
+      cooldownMinutes: 30,
+      autoApplyEnabled: true,
+      boards: ['close.com', 'n8n', 'firecrawl', 'openrouter']
     }
   };
 }

@@ -51,6 +51,16 @@
     "cooldownMinutes": 1,
     "autoApplyEnabled": false
   },
+  "greenhouse": {
+    "enabled": false,
+    "priority": 35,
+    "maxJobsPerRun": 20,
+    "cooldownMinutes": 3,
+    "autoApplyEnabled": false,
+    "timeoutMs": 120000,
+    "maxAgeDays": 14,
+    "_note": "Public Greenhouse Job Board API scraper. Configure boards per profile."
+  },
   "weworkremotely": {
     "enabled": false,
     "priority": 30,
@@ -62,7 +72,7 @@
   "remoteok": {
     "enabled": true,
     "priority": 40,
-    "maxJobsPerRun": 30,
+    "maxJobsPerRun": 50,
     "cooldownMinutes": 1,
     "autoApplyEnabled": true
   },
@@ -93,7 +103,7 @@
   "remotive": {
     "enabled": true,
     "priority": 80,
-    "maxJobsPerRun": 30,
+    "maxJobsPerRun": 50,
     "cooldownMinutes": 1,
     "autoApplyEnabled": true
   },
@@ -106,9 +116,9 @@
     "_disabled_reason": "Planned scraper; not implemented yet"
   },
   "himalayas": {
-    "enabled": true,
+    "enabled": false,
     "priority": 100,
-    "maxJobsPerRun": 20,
+    "maxJobsPerRun": 50,
     "cooldownMinutes": 1,
     "autoApplyEnabled": true,
     "timeoutMs": 180000
@@ -140,7 +150,7 @@
   "jobberman": {
     "enabled": true,
     "priority": 140,
-    "maxJobsPerRun": 20,
+    "maxJobsPerRun": 50,
     "cooldownMinutes": 1,
     "autoApplyEnabled": true
   },
@@ -202,7 +212,7 @@
   "remotejobsorg": {
     "enabled": true,
     "priority": 220,
-    "maxJobsPerRun": 20,
+    "maxJobsPerRun": 50,
     "cooldownMinutes": 1,
     "autoApplyEnabled": true
   },
@@ -211,6 +221,13 @@
     "priority": 230,
     "maxJobsPerRun": 20,
     "cooldownMinutes": 1,
+    "autoApplyEnabled": true
+  },
+  "ashby": {
+    "enabled": false,
+    "priority": 50,
+    "maxJobsPerRun": 10,
+    "cooldownMinutes": 30,
     "autoApplyEnabled": true
   }
 }

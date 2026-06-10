@@ -10,7 +10,9 @@ import { scrapeRemotiveJobs } from './remotive.js';
 import { scrapeHimalayasJobs } from './himalayas.js';
 import { scrapeJobbermanJobs } from './jobberman.js';
 import { scrapeRemoteJobsOrgJobs } from './remotejobsorg.js';
+import { scrapeAshbyJobs } from './ashby.js';
 import { scrapeWellfoundJobs } from './wellfound.js';
+import { scrapeGreenhouseJobs } from './greenhouse.js';
 import { createPlatformMockJobs } from './platformMockJobs.js';
 import { PlannedScraper } from './plannedScraper.js';
 
@@ -22,7 +24,9 @@ export const scraperRegistry = {
   himalayas: { scrape: scrapeHimalayasJobs, implemented: true },
   jobberman: { scrape: scrapeJobbermanJobs, implemented: true },
   remotejobsorg: { scrape: scrapeRemoteJobsOrgJobs, implemented: true },
+  ashby: { scrape: scrapeAshbyJobs, implemented: true },
   wellfound: { scrape: scrapeWellfoundJobs, implemented: true },
+  greenhouse: { scrape: scrapeGreenhouseJobs, implemented: true },
   arbeitnow: planned('arbeitnow', 'Arbeitnow scraper is not implemented yet.'),
   betternship: planned('betternship', 'Betternship scraper is not implemented yet.'),
   careernest: planned('careernest', 'CareerNest scraper is not implemented yet.'),
@@ -159,6 +163,10 @@ async function runSiteScraper(entry, config, site, siteConfig) {
 }
 
 function isCoolingDown(site, siteConfig, state) {
+  // Manual snooze (set via the Telegram /snooze command) always wins.
+  const snoozeUntil = state.sites?.[site]?.snoozeUntil;
+  if (snoozeUntil && Date.now() < new Date(snoozeUntil).getTime()) return true;
+
   const cooldownMinutes = Number.parseInt(siteConfig.cooldownMinutes, 10);
   if (!Number.isFinite(cooldownMinutes) || cooldownMinutes <= 0) return false;
 
