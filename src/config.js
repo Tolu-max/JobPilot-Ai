@@ -150,7 +150,7 @@ export function buildConfig(argv = process.argv) {
     ),
     schedulerIntervalMs: readNumber(
       process.env[`${envPrefix}_SCHEDULER_INTERVAL_MS`] || process.env.SCHEDULER_INTERVAL_MS,
-      preferences.schedulerIntervalMs ?? 4 * 60 * 60 * 1000
+      preferences.schedulerIntervalMs ?? 15 * 60 * 1000
     ),
     captchaWaitMs: Number.parseInt(process.env.CAPTCHA_WAIT_MS || String(10 * 60 * 1000), 10),
     applicationTimeoutMs: Number.parseInt(process.env.APPLICATION_TIMEOUT_MS || String(3 * 60 * 1000), 10),
@@ -380,7 +380,14 @@ function defaultSitesConfig() {
     bruntwork: {
       enabled: true,
       priority: 10,
-      maxJobsPerRun: 0,
+      maxJobsPerRun: 10,
+      cooldownMinutes: 1,
+      autoApplyEnabled: true
+    },
+    jobberman: {
+      enabled: true,
+      priority: 140,
+      maxJobsPerRun: 10,
       cooldownMinutes: 1,
       autoApplyEnabled: true
     }
