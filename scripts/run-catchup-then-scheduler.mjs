@@ -12,10 +12,25 @@ import { startScheduler } from '../src/scheduler.js';
 const rootDir = path.dirname(fileURLToPath(new URL('../package.json', import.meta.url)));
 const dataDir = process.env.JOBPILOT_DATA_DIR || (process.env.RAILWAY_ENVIRONMENT ? '/app/data' : path.join(rootDir, 'data'));
 const catchupDir = path.join(dataDir, 'catchup');
-const catchupFlagPath = path.join(catchupDir, 'bruntwork-50-jobberman-40-2026-06-10-v3.json');
+const catchupFlagPath = path.join(catchupDir, 'bruntwork-50-jobberman-40-2026-06-10-v4.json');
 
 const profileNames = parseProfiles(process.env.PROFILES || process.env.PROFILE || 'tolu,sister');
 const changedEnv = new Map();
+
+// Clear ignored/reviewed jobs before catchup
+for (const profile of profileNames) {
+  const jobsPath = path.join(dataDir, 'profiles', profile, 'processedJobs.json');
+  try {
+    const raw = await fs.readFile(jobsPath, 'utf8');
+    const d = JSON.parse(raw);
+    const before = d.jobs.length;
+    d.jobs = d.jobs.filter((j) => j.status === 'applied' || j.status === 'failed' || j.status === 'duplicate');
+    await fs.writeFile(jobsPath, JSON.stringify(d, null, 2));
+    console.log(`[catchup] ${profile}: cleared ignored/reviewed jobs. Kept ${d.jobs.length} of ${before}.`);
+  } catch (err) {
+    console.log(`[catchup] ${profile}: Could not clear jobs (maybe file doesn't exist yet).`, err.message);
+  }
+}
 
 await bootstrapProfilesFromEnv({ rootDir, logger: console });
 process.env.JOBPILOT_PROFILE_BOOTSTRAPPED = '1';
