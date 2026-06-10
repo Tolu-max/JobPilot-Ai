@@ -11,6 +11,12 @@
 
 import { FormStep, Proof, noProof, proofFound } from './types.js';
 import { reactFill, checkAllRadioGroups, auditRequiredFields, firstPhone } from './atsFormHelpers.js';
+import { request as aiRequest, TaskTypes } from '../aiRouter.js';
+import {
+  buildGroundedFallbackAnswer,
+  cleanApplicationAnswer,
+  validateApplicationAnswer
+} from '../applicationAnswerGuard.js';
 
 const NAME = 'ashby';
 const APPLY_FORM_URL = /\/application(\?|$)/;
@@ -93,7 +99,109 @@ async function fillStep(page, step, ctx) {
 
   await checkAllRadioGroups(page);
 
+  // Custom textareas (AI Answered)
+  const textareas = await page.locator('textarea:visible').all();
+  for (const ta of textareas) {
+    const name = await ta.getAttribute('name').catch(() => '');
+    if (/cover/i.test(name) || /notes/i.test(name)) continue; 
+    const cur = await ta.inputValue().catch(() => '');
+    if (cur && cur.trim().length > 0) continue;
+
+    let question = await ta.evaluate((el) => {
+      const id = el.getAttribute('id');
+      const label = id ? document.querySelector(`label[for="${CSS.escape(id)}"]`) : null;
+      if (label) return label.innerText;
+      const wrap = el.closest('div');
+      return wrap ? (wrap.innerText || '').slice(0, 300) : '';
+    }).catch(() => '');
+
+    if (question && question.trim().length > 0) {
+      const answerResult = await answerApplicationQuestion(question, ctx, candidate);
+      const answer = answerResult.answer;
+      if (answer && answer.length > 10) {
+        await ta.fill(answer).catch(() => {});
+        await page.waitForTimeout(150);
+      }
+    }
+  }
+
+  // Select dropdowns
+  const selects = await page.locator('select:visible').all();
+  for (const sel of selects) {
+    const cur = await sel.inputValue().catch(() => '');
+    if (cur && cur !== '') continue;
+    const opts = await sel.evaluate((el) => Array.from(el.options).map((o) => o.value).filter((v) => v && v !== '0'));
+    if (opts.length > 0) {
+      await sel.selectOption(opts[0]).catch(() => {});
+    }
+  }
+
   await page.waitForTimeout(500);
+}
+
+async function answerApplicationQuestion(question, ctx, cv) {
+  const fallback = buildGroundedFallbackAnswer(question, ctx.answers || {}, ctx.config || {}, cv);
+
+  try {
+    const cvSummary = `Name: ${cv.name || 'N/A'}
+Summary: ${cv.summary || cv.rawTextPreview || 'N/A'}
+Experience: ${cv.experience || cv.yearsOfExperience || 'N/A'}
+Skills: ${(cv.skills || []).join(', ') || 'N/A'}
+Education: ${Array.isArray(cv.education) ? cv.education.map((item) => JSON.stringify(item)).join(' ') : cv.education || 'N/A'}`;
+
+    const prompt = `Return JSON only in this shape: {"answer":"..."}.
+
+You are helping a job applicant answer an application question. Generate a natural, honest answer based only on the candidate CV and profile.
+
+Question: ${question}
+
+Candidate CV:
+${cvSummary}
+
+Instructions:
+- Write 2-4 sentences maximum.
+- Start the answer immediately. Do NOT use conversational filler or preambles like "Here is my answer", "Based on the CV", or "As an AI".
+- No bullet points, no dashes, no lists.
+- Do not invent skills, tools, degrees, years of experience, countries, or certifications.
+- If the CV does not prove the requested exact experience, say that the exact experience is not documented and mention transferable skills instead.
+- Keep it under 200 words.`;
+
+    const aiResult = await aiRequest({
+      taskType: TaskTypes.APPLICATION_WRITING,
+      prompt,
+      profile: { profileName: ctx.config?.profileName || 'default' },
+      jobData: ctx.job || {},
+      config: ctx.config || {}
+    });
+
+    const cleaned = cleanApplicationAnswer(aiResult.response || '');
+    const validated = validateApplicationAnswer({
+      question,
+      answer: cleaned,
+      config: ctx.config || {},
+      candidate: cv,
+      fallback
+    });
+
+    if (!validated.ok) {
+      console.warn(`[ashby] Replaced unsupported answer claim for "${String(question).slice(0, 50)}...": ${validated.reason}`);
+    }
+
+    return {
+      answer: validated.answer || fallback,
+      provider: aiResult.modelUsed || 'local-fallback',
+      usedFallback: Boolean(aiResult.fallbackUsed),
+      validationReplaced: !validated.ok
+    };
+  } catch (err) {
+    console.warn(`[ashby] AI answer failed, using grounded fallback: ${err.message}`);
+    return {
+      answer: fallback,
+      provider: 'local-fallback',
+      usedFallback: true,
+      validationReplaced: false
+    };
+  }
 }
 
 // ── advance (submit) ────────────────────────────────────────────────────────
