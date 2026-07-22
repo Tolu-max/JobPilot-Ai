@@ -218,6 +218,11 @@ function assessSisterRoleFit(corpus, profile = {}) {
       reason: 'Profile role QA: bookkeeping/accounting roles need explicit profile support.'
     },
     {
+      pattern: /\b(bilingual|spanish|german|french|italian|portuguese|mandarin|cantonese|japanese|korean|dutch|swedish|danish|russian)\b/i,
+      allowed: hasAllowed(/bilingual|spanish|german|french/i),
+      reason: 'Profile role QA: foreign language / bilingual requirement not supported for this profile.'
+    },
+    {
       pattern: /\b(cold calling|telemarketing|outbound sales|commission only|closing sales|door to door)\b/i,
       allowed: hasAllowed(/sales|cold calling|telemarketing|outbound|lead generation|appointment/i),
       reason: 'Profile role QA: hard sales/cold calling roles need explicit profile support.'
@@ -252,32 +257,112 @@ async function getAiScore(job, candidateProfile, config) {
       config
     });
 
-    // Strip markdown code blocks if present
-    let cleanResponse = result.response.trim();
-    if (cleanResponse.startsWith('```json')) {
-      cleanResponse = cleanResponse.replace(/^```json\s*/, '').replace(/\s*```$/, '');
-    } else if (cleanResponse.startsWith('```')) {
-      cleanResponse = cleanResponse.replace(/^```\s*/, '').replace(/\s*```$/, '');
-    }
-
-    const parsed = JSON.parse(cleanResponse);
-    const score = clampScoreInt(parsed.score);
+    const parsed = parseAiScoringResponse(result.response);
+    const score = parsed.score;
     const matchedSkills = Array.isArray(parsed.matched_skills) ? parsed.matched_skills.slice(0, 12) : [];
     const missingSkills = Array.isArray(parsed.missing_skills) ? parsed.missing_skills.slice(0, 12) : [];
     const reasons = Array.isArray(parsed.reasons) && parsed.reasons.length > 0 
       ? parsed.reasons.slice(0, 6) 
       : ['AI returned empty reasons. Scoring completed based on provided logic.'];
 
-    // If score is completely invalid, we fall back. Otherwise, we trust it.
-    if (!Number.isFinite(Number.parseInt(parsed.score, 10))) {
-      throw new Error('AI returned invalid score format');
-    }
-
     return { score, matchedSkills, missingSkills, reasons };
   } catch (error) {
     console.error('[localMatcher] AI scoring failed, using fallback:', error.message);
     return keywordBasedScore(job, candidateProfile, config);
   }
+}
+
+export function parseAiScoringResponse(text) {
+  const parsed = parseJsonFromAi(text);
+  const score = parseScoreValue(parsed?.score ?? parsed?.match_score ?? parsed?.job_match_score ?? parsed?.rating, text);
+  if (!Number.isFinite(score)) {
+    throw new Error('AI returned invalid score format');
+  }
+
+  return {
+    ...parsed,
+    score: clampScoreInt(score)
+  };
+}
+
+function parseJsonFromAi(text) {
+  const raw = String(text || '').trim();
+  if (!raw) throw new Error('AI returned empty response');
+
+  try {
+    return JSON.parse(raw);
+  } catch {
+    // Continue through the tolerant parsing paths below.
+  }
+
+  const fenceStripped = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+  try {
+    return JSON.parse(fenceStripped);
+  } catch {
+    // Continue to extracting the first object from prose.
+  }
+
+  const objectText = extractFirstJsonObject(raw);
+  if (objectText) return JSON.parse(objectText);
+
+  throw new Error('No valid JSON found in AI response');
+}
+
+function extractFirstJsonObject(text) {
+  const start = text.indexOf('{');
+  if (start === -1) return '';
+
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let i = start; i < text.length; i += 1) {
+    const char = text[i];
+
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+
+    if (char === '\\') {
+      escaped = inString;
+      continue;
+    }
+
+    if (char === '"') {
+      inString = !inString;
+      continue;
+    }
+
+    if (inString) continue;
+
+    if (char === '{') depth += 1;
+    if (char === '}') {
+      depth -= 1;
+      if (depth === 0) return text.slice(start, i + 1);
+    }
+  }
+
+  return '';
+}
+
+function parseScoreValue(value, sourceText = '') {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+
+  const text = String(value ?? '').trim();
+  const directNumber = text.match(/^-?\d+(?:\.\d+)?$/);
+  if (directNumber) return Number.parseFloat(directNumber[0]);
+
+  const fraction = text.match(/(-?\d+(?:\.\d+)?)\s*\/\s*100\b/);
+  if (fraction) return Number.parseFloat(fraction[1]);
+
+  const percent = text.match(/(-?\d+(?:\.\d+)?)\s*%/);
+  if (percent) return Number.parseFloat(percent[1]);
+
+  const labelled = String(sourceText || text).match(/\b(?:score|match_score|job_match_score|rating)\b[^0-9-]{0,20}(-?\d+(?:\.\d+)?)(?:\s*\/\s*100|\s*%)?/i);
+  if (labelled) return Number.parseFloat(labelled[1]);
+
+  return Number.NaN;
 }
 
 function clampScoreInt(value) {
@@ -346,8 +431,15 @@ You MUST provide at least one reason in the "reasons" array, even if the candida
 
 ${profileSpecificScoringRules(config, candidateProfile)}
 
-=== OUTPUT ===
-Return ONLY this JSON (no prose, no markdown):
+=== OUTPUT CONTRACT ===
+Return exactly one JSON object. Do not include markdown fences, prose, bullets, comments, or labels before/after the object.
+The "score" value must be a JSON number, not a string, percentage, fraction, range, or explanation.
+If uncertain, choose the lower honest integer score.
+
+Valid output example:
+{"score":72,"matched_skills":["Customer Support"],"missing_skills":["Salesforce"],"reasons":["The role asks for customer support and the CV shows customer-facing experience.","Salesforce is requested but not shown in the CV."]}
+
+Required JSON shape:
 {
   "score": <integer 0-100>,
   "matched_skills": [<skills from the CV that the job explicitly asks for, max 8>],
@@ -358,9 +450,8 @@ Return ONLY this JSON (no prose, no markdown):
 
 function profileSpecificScoringRules(config = {}, candidateProfile = {}) {
   const profileName = String(config.profileName || candidateProfile.profileName || candidateProfile.name || '').toLowerCase();
-  if (!profileName.includes('sister')) return '';
-
   return `Additional Sister-specific hard rules:
+- If the role requires a foreign language (Bilingual Spanish, German, French, etc.) and the candidate's CV only shows English, cap score at 0.
 - If the role is primarily SDR/BDR/outbound sales/cold calling/quota-carrying SaaS sales, cap score at 45 unless the CV shows direct cold-calling, quota, SaaS sales, Salesforce, or SDR/BDR work history evidence.
 - If the role is primarily standalone social media management/coordinator/content creator, cap score at 45 unless the CV shows hands-on social media campaign/platform/content-calendar/analytics ownership, not just general communication or admin support.`;
 }
