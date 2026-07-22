@@ -10,6 +10,8 @@ import greenhouseAdapter from './greenhouse.js';
 import leverAdapter from './lever.js';
 import workableAdapter from './workable.js';
 import ashbyAdapter from './ashby.js';
+import bamboohrAdapter from './bamboohr.js';
+import myjobmagAdapter from './myjobmag.js';
 import genericAdapter from './generic.js';
 
 const ADAPTERS = [
@@ -23,6 +25,8 @@ const ADAPTERS = [
   leverAdapter,
   workableAdapter,
   ashbyAdapter,
+  bamboohrAdapter,
+  myjobmagAdapter,
   genericAdapter
 ];
 
@@ -45,5 +49,3 @@ export function getAdapter(url) {
 export function registerAdapter(adapter) {
   ADAPTERS.splice(ADAPTERS.length - 1, 0, adapter);
 }
-
-export { bruntworkAdapter, influxAdapter, jobbermanAdapter, applyToJobAdapter, remoteJobsOrgAdapter, remoteOkAdapter, greenhouseAdapter, leverAdapter, workableAdapter, ashbyAdapter, genericAdapter };
