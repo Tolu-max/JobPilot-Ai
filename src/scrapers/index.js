@@ -13,6 +13,13 @@ import { scrapeRemoteJobsOrgJobs } from './remotejobsorg.js';
 import { scrapeAshbyJobs } from './ashby.js';
 import { scrapeWellfoundJobs } from './wellfound.js';
 import { scrapeGreenhouseJobs } from './greenhouse.js';
+import { scrapeWeWorkRemotelyJobs } from './weworkremotely.js';
+import { scrapeJobicyJobs } from './jobicy.js';
+import { scrapeTheMuseJobs } from './themuse.js';
+import { scrapeArbeitnowJobs } from './arbeitnow.js';
+import { scrapeRealWorkFromAnywhereJobs } from './realworkfromanywhere.js';
+import { scrapeWorkingNomadsJobs } from './workingnomads.js';
+import { scrapeMyJobMagJobs } from './myjobmag.js';
 import { createPlatformMockJobs } from './platformMockJobs.js';
 import { PlannedScraper } from './plannedScraper.js';
 
@@ -27,7 +34,7 @@ export const scraperRegistry = {
   ashby: { scrape: scrapeAshbyJobs, implemented: true },
   wellfound: { scrape: scrapeWellfoundJobs, implemented: true },
   greenhouse: { scrape: scrapeGreenhouseJobs, implemented: true },
-  arbeitnow: planned('arbeitnow', 'Arbeitnow scraper is not implemented yet.'),
+  arbeitnow: { scrape: scrapeArbeitnowJobs, implemented: true },
   betternship: planned('betternship', 'Betternship scraper is not implemented yet.'),
   careernest: planned('careernest', 'CareerNest scraper is not implemented yet.'),
   dailyremote: planned('dailyremote', 'DailyRemote scraper is not implemented yet.'),
@@ -36,16 +43,17 @@ export const scraperRegistry = {
   indeed: planned('indeed', 'Indeed scraper is not implemented yet.'),
   jobdataapi: planned('jobdataapi', 'JobDataAPI integration is not implemented yet.'),
   jobgether: planned('jobgether', 'Jobgether scraper is not implemented yet.'),
-  jobicy: planned('jobicy', 'Jobicy scraper is not implemented yet.'),
+  jobicy: { scrape: scrapeJobicyJobs, implemented: true },
   jobspresso: planned('jobspresso', 'Jobspresso scraper is not implemented yet.'),
   linkedin: planned('linkedin', 'LinkedIn scraper is not implemented yet.'),
-  myjobmag: planned('myjobmag', 'MyJobMag scraper is not implemented yet.'),
+  myjobmag: { scrape: scrapeMyJobMagJobs, implemented: true },
   onlinejobsph: planned('onlinejobsph', 'OnlineJobs.ph scraper is not implemented yet.'),
   remoteco: planned('remoteco', 'Remote.co scraper is not implemented yet.'),
   remoteyeah: planned('remoteyeah', 'RemoteYeah scraper is not implemented yet.'),
-  themuse: planned('themuse', 'The Muse scraper is not implemented yet.'),
-  weworkremotely: planned('weworkremotely', 'We Work Remotely scraper is not implemented yet.'),
-  workingnomads: planned('workingnomads', 'Working Nomads scraper is not implemented yet.')
+  themuse: { scrape: scrapeTheMuseJobs, implemented: true },
+  weworkremotely: { scrape: scrapeWeWorkRemotelyJobs, implemented: true },
+  workingnomads: { scrape: scrapeWorkingNomadsJobs, implemented: true },
+  realworkfromanywhere: { scrape: scrapeRealWorkFromAnywhereJobs, implemented: true }
 };
 
 function planned(siteName, note) {
