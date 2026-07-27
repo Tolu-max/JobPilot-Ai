@@ -8,6 +8,7 @@ export function buildConfig(argv = process.argv) {
   const profileName = resolveProfileName(argv);
   const testPlatformMode = readBoolean(process.env.TEST_PLATFORM_MODE, false);
   const e2eTestMode = readBoolean(process.env.E2E_TEST_MODE, false);
+  const railwayLike = isRailwayLikeRuntime();
   const profileDir = path.resolve(rootDir, 'profiles', profileName);
   const preferencesPath = path.join(profileDir, 'preferences.json');
   const preferences = readJsonSync(preferencesPath, {});
@@ -51,6 +52,16 @@ export function buildConfig(argv = process.argv) {
     env: process.env
   });
   const aiMode = normalizeAiMode(process.env.AI_MODE || (testPlatformMode ? 'MOCK' : 'REAL'));
+  const noRealSubmission = readBoolean(process.env.NO_REAL_SUBMISSION, false);
+  const testMode =
+    testPlatformMode ||
+    e2eTestMode ||
+    noRealSubmission ||
+    readBoolean(process.env[`${envPrefix}_TEST_MODE`], readBoolean(process.env.TEST_MODE, preferences.testMode === true));
+  const debugArtifactsEnabled = readBoolean(
+    process.env[`${envPrefix}_DEBUG_ARTIFACTS_ENABLED`] || process.env.DEBUG_ARTIFACTS_ENABLED,
+    preferences.debugArtifactsEnabled ?? (!railwayLike || testMode)
+  );
 
   return {
     rootDir,
@@ -68,6 +79,7 @@ export function buildConfig(argv = process.argv) {
     userProfile: preferences.userProfileSummary || '',
     testPlatformMode,
     e2eTestMode,
+    railwayLike,
     platformScrapeMode: normalizePlatformScrapeMode(process.env.TEST_PLATFORM_SCRAPE_MODE || 'mock'),
     aiMode,
     aiProvider: normalizeAiProvider(process.env.AI_PROVIDER || process.env.AI_LAYER || 'deepseek'),
@@ -118,6 +130,7 @@ export function buildConfig(argv = process.argv) {
     jobStorePath: path.join(profileDir, 'processedJobs.json'),
     globalJobStorePath: path.resolve(rootDir, 'data', 'globalProcessedJobs.json'),
     reviewPath: path.resolve(rootDir, 'review', 'jobs.json'),
+    eventsDir: path.resolve(rootDir, 'events'),
     logPath: path.resolve(rootDir, 'logs', `${profileName}.log`),
     aiRouterLogPath: path.resolve(rootDir, 'logs', 'aiRouter.log'),
     aiCachePath: path.resolve(rootDir, 'data', 'aiCache.json'),
@@ -133,15 +146,25 @@ export function buildConfig(argv = process.argv) {
       process.env[`${envPrefix}_BROWSER_PROFILE_DIR`] || preferences.browserProfileDir || path.join('..', '..', 'browser-profiles', profileName)
     ),
     autoApply: readBoolean(process.env[`${envPrefix}_AUTO_APPLY`], readBoolean(process.env.AUTO_APPLY, preferences.autoApply === true)),
-    noRealSubmission: readBoolean(process.env.NO_REAL_SUBMISSION, false),
-    testMode:
-      testPlatformMode ||
-      e2eTestMode ||
-      readBoolean(process.env.NO_REAL_SUBMISSION, false) ||
-      readBoolean(process.env[`${envPrefix}_TEST_MODE`], readBoolean(process.env.TEST_MODE, preferences.testMode === true)),
+    noRealSubmission,
+    testMode,
+    debugArtifactsEnabled,
+    retentionEnabled: readBoolean(process.env.JOBPILOT_RETENTION_ENABLED, railwayLike),
+    debugRetentionDays: readNumber(process.env.JOBPILOT_DEBUG_RETENTION_DAYS, railwayLike ? 3 : 14),
+    debugRetentionMaxDirs: readNumber(process.env.JOBPILOT_DEBUG_RETENTION_MAX_DIRS, railwayLike ? 25 : 250),
+    logRetentionMaxBytes: readNumber(process.env.JOBPILOT_LOG_RETENTION_MAX_BYTES, railwayLike ? 1_000_000 : 5_000_000),
+    eventRetentionMaxBytes: readNumber(process.env.JOBPILOT_EVENT_RETENTION_MAX_BYTES, railwayLike ? 2_000_000 : 10_000_000),
     maxAutoApplyPerRun: readNumber(
       process.env[`${envPrefix}_MAX_AUTO_APPLY_PER_RUN`] || process.env.MAX_AUTO_APPLY_PER_RUN,
       preferences.maxAutoApplyPerRun ?? 1
+    ),
+    applicationReviewScoreFloor: readNumber(
+      process.env[`${envPrefix}_APPLICATION_REVIEW_SCORE_FLOOR`] || process.env.APPLICATION_REVIEW_SCORE_FLOOR,
+      preferences.applicationReviewScoreFloor ?? 70
+    ),
+    autoApplyScoreThreshold: readNumber(
+      process.env[`${envPrefix}_AUTO_APPLY_SCORE_THRESHOLD`] || process.env.AUTO_APPLY_SCORE_THRESHOLD,
+      preferences.autoApplyScoreThreshold ?? 55
     ),
     maxJobsPerRun: effectiveMaxJobsPerRun,
     geminiMinLocalScore: readNumber(
@@ -167,6 +190,14 @@ export function buildConfig(argv = process.argv) {
     ),
     telegramBotToken: process.env[`${envPrefix}_TELEGRAM_BOT_TOKEN`] || process.env.TELEGRAM_BOT_TOKEN || '',
     telegramChatId: process.env[`${envPrefix}_TELEGRAM_CHAT_ID`] || process.env.TELEGRAM_CHAT_ID || '',
+    telegramRunSummaryCooldownMs: readNumber(
+      process.env[`${envPrefix}_TELEGRAM_RUN_SUMMARY_COOLDOWN_MS`] || process.env.TELEGRAM_RUN_SUMMARY_COOLDOWN_MS,
+      preferences.telegramRunSummaryCooldownMs ?? 60 * 60 * 1000
+    ),
+    telegramHealthyRunSummaryIntervalMs: readNumber(
+      process.env[`${envPrefix}_TELEGRAM_HEALTHY_RUN_SUMMARY_INTERVAL_MS`] || process.env.TELEGRAM_HEALTHY_RUN_SUMMARY_INTERVAL_MS,
+      preferences.telegramHealthyRunSummaryIntervalMs ?? (railwayLike ? 60 * 60 * 1000 : 0)
+    ),
     notificationRoutes: preferences.notificationRoutes || {},
     headless: readBoolean(process.env.HEADLESS, true),
     allowGatewayAutoSubmit: readBoolean(
@@ -176,6 +207,10 @@ export function buildConfig(argv = process.argv) {
     captchaSolvApiKey: process.env.CAPTCHASOLV_API_KEY || '',
     capsolverApiKey: process.env.CAPSOLVER_API_KEY || '',
     captchaSolverTimeoutMs: Number.parseInt(process.env.CAPTCHA_SOLVER_TIMEOUT_MS || String(45 * 1000), 10),
+    usePersistentBrowserProfile: readBoolean(
+      process.env[`${envPrefix}_USE_PERSISTENT_BROWSER_PROFILE`] || process.env.USE_PERSISTENT_BROWSER_PROFILE,
+      preferences.usePersistentBrowserProfile ?? !railwayLike
+    ),
     minDelayMs: readNumber(
       process.env[`${envPrefix}_MIN_DELAY_MS`] || process.env.MIN_DELAY_MS,
       preferences.minDelayMs ?? 2000
@@ -389,7 +424,10 @@ function defaultSitesConfig() {
       priority: 140,
       maxJobsPerRun: 10,
       cooldownMinutes: 1,
-      autoApplyEnabled: true
+      autoApplyEnabled: false,
+      jobsUrl: 'https://www.jobberman.com/jobs/remote',
+      remoteOnly: true,
+      maxAgeDays: 30
     },
     ashby: {
       enabled: true,
@@ -416,13 +454,67 @@ function readNumber(value, fallback) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function isRailwayLikeRuntime() {
+  return Boolean(
+    process.env.RAILWAY_ENVIRONMENT ||
+    process.env.RAILWAY_PROJECT_ID ||
+    process.env.RAILWAY_SERVICE_ID ||
+    path.resolve(rootDir) === '/app'
+  );
+}
+
 function resolveProfilePath(root, profileDir, value) {
-  if (path.isAbsolute(value)) return value;
-  return path.resolve(profileDir, value);
+  return resolveStoredProfilePath(root, profileDir, value).absolutePath;
 }
 
 function resolveOptionalProfilePath(root, profileDir, value) {
   return value ? resolveProfilePath(root, profileDir, value) : '';
+}
+
+export function resolveStoredProfilePath(root, profileDir, value) {
+  const rawValue = String(value || '').trim();
+  if (!rawValue) {
+    return {
+      rawValue,
+      storedValue: rawValue,
+      absolutePath: path.resolve(profileDir, rawValue),
+      isPortable: true,
+      reason: 'empty'
+    };
+  }
+
+  if (!path.isAbsolute(rawValue)) {
+    return {
+      rawValue,
+      storedValue: rawValue,
+      absolutePath: path.resolve(profileDir, rawValue),
+      isPortable: true,
+      reason: 'relative'
+    };
+  }
+
+  const relativeToProfile = path.relative(profileDir, rawValue);
+  if (relativeToProfile && !relativeToProfile.startsWith('..') && !path.isAbsolute(relativeToProfile)) {
+    return {
+      rawValue,
+      storedValue: normalizePathForStorage(relativeToProfile),
+      absolutePath: rawValue,
+      isPortable: true,
+      reason: 'inside-profile'
+    };
+  }
+
+  return {
+    rawValue,
+    storedValue: rawValue,
+    absolutePath: rawValue,
+    isPortable: false,
+    reason: 'absolute-external'
+  };
+}
+
+function normalizePathForStorage(value) {
+  return String(value || '').split(path.sep).join('/');
 }
 
 function normalizeAiMode(value) {

@@ -149,7 +149,8 @@ export function optimizeApplication({
   candidateProfile,
   resumeText = '',
   localAnalysis = {},
-  aiAnalysis = {}
+  aiAnalysis = {},
+  config = {}
 }) {
   const jobText = buildJobText(job);
   const candidateText = buildCandidateText(candidateProfile, resumeText);
@@ -185,7 +186,8 @@ export function optimizeApplication({
     interviewProbability,
     riskFlags,
     localAnalysis,
-    keywordAnalysis
+    keywordAnalysis,
+    config
   });
   const optimizedResumeKeywords = buildOptimizedResumeKeywords(keywordAnalysis, resumeText);
   const optimizedCoverLetter = generateCoverLetter({
@@ -367,16 +369,15 @@ function scoreInterviewProbability({
   );
 }
 
-function recommendAction({ applicationScore, atsScore, interviewProbability, riskFlags, localAnalysis, keywordAnalysis }) {
+function recommendAction({ applicationScore, atsScore, interviewProbability, riskFlags, localAnalysis, keywordAnalysis, config = {} }) {
   const highRisk = riskFlags.some((flag) => flag.severity === 'high');
-  const requiredTotal = keywordAnalysis.required_skills.length;
-  const missingRequiredRatio = requiredTotal ? keywordAnalysis.missing_required_skills.length / requiredTotal : 0;
+  const threshold = Number.isFinite(config.autoApplyScoreThreshold) ? config.autoApplyScoreThreshold : 55;
 
   if (highRisk) {
     return 'skip';
   }
 
-  if (applicationScore >= 55) {
+  if (applicationScore >= threshold) {
     return 'apply';
   }
 
@@ -743,11 +744,17 @@ function normalizeComparable(value) {
 
 function detectExperienceLevel(text) {
   const normalized = normalizeComparable(text);
-  if (/\b(chief|vp|director|head of|executive)\b/.test(normalized)) return 'executive';
+  if (isAssistantRole(normalized)) return /\b(senior|lead)\b/.test(normalized) ? 'senior' : 'junior';
+  if (/\b(chief|vp|director|head of|c suite|c level)\b/.test(normalized)) return 'executive';
+  if (/\bexecutive\b/.test(normalized) && !/\bexecutive\s+(assistant|support|coordinator|administrator)\b/.test(normalized)) return 'executive';
   if (/\b(senior|lead|5 years|five years|7 years|seven years)\b/.test(normalized)) return 'senior';
   if (/\b(mid level|intermediate|2 years|two years|3 years|three years|4 years|four years)\b/.test(normalized)) return 'mid';
   if (/\b(junior|entry level|1 year|one year|assistant)\b/.test(normalized)) return 'junior';
   return 'unspecified';
+}
+
+function isAssistantRole(normalizedText) {
+  return /\b(executive assistant|c suite executive assistant|c level executive assistant|admin assistant|administrative assistant|virtual assistant|personal assistant|office assistant)\b/.test(normalizedText);
 }
 
 function wordFrequency(text) {

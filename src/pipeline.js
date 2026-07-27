@@ -45,16 +45,16 @@ export async function runJobHunt(config, options = {}) {
     return [];
   }
   await pullDashboardApprovals(config);
-  await flushPendingApplyQueue(config, autoApplyBudget);
+  const pendingRun = await flushPendingApplyQueue(config, autoApplyBudget);
   const scrapeResult = await withRetry(() => runScrapers(config), { retries: 1, delayMs: 5000 });
   const jobs = scrapeResult.jobs;
   const runSummary = {
     ...scrapeResult,
     jobsIgnored: 0,
-    jobsQueuedForReview: 0,
-    jobsAutoApplied: 0,
-    jobsAutoApplyAttempts: 0,
-    processingErrors: 0,
+    jobsQueuedForReview: pendingRun.manualReview + pendingRun.blocked,
+    jobsAutoApplied: pendingRun.applied,
+    jobsAutoApplyAttempts: pendingRun.attempts,
+    processingErrors: pendingRun.failed,
     jobsDeduped: 0
   };
   await appendLog(`Scraped ${jobs.length} job(s)`, config);
@@ -85,6 +85,21 @@ export async function runJobHunt(config, options = {}) {
 
       // Handle jobs accepted via Telegram — apply immediately
       if (existing?.status === 'pending_apply') {
+        const applyGate = await validateLiveSubmitReadiness({ job, profile, existing, config });
+        if (!applyGate.ready) {
+          runSummary.jobsQueuedForReview += 1;
+          results.push(rowFor(job, existing.score || 0, 'review', 'pending', {
+            reasons: [applyGate.reason]
+          }));
+          await upsertJobRecord(config, job, 'reviewed', {
+            score: existing.score || 0,
+            decision: 'review',
+            acceptedViaTelegram: existing.acceptedViaTelegram === true,
+            skippedBecause: applyGate.reason
+          });
+          await appendLog(`Pending apply blocked by final gate: ${job.title} - ${applyGate.reason}`, config);
+          continue;
+        }
         if (!canAttemptAutoApply(autoApplyBudget)) {
           const limitReason = autoApplyLimitReason(autoApplyBudget);
           runSummary.jobsQueuedForReview += 1;
@@ -113,10 +128,23 @@ export async function runJobHunt(config, options = {}) {
             score: existing.score || 0, decision: 'apply',
             acceptedViaTelegram: true, appliedAt: new Date().toISOString()
           });
+        } else if (applyResult.outcome === ApplicationOutcome.REQUIRES_MANUAL_REVIEW) {
+          runSummary.jobsQueuedForReview += 1;
+          await recordJobStatus(config, jobWithUrl, 'manual_review', {
+            score: existing.score || 0,
+            decision: 'review',
+            acceptedViaTelegram: true,
+            reason: applyResult.reason,
+            retryCount: 3,
+            terminal: true
+          });
         } else {
-          await recordJobStatus(config, jobWithUrl, 'failed', {
+          const terminal = isTerminalApplicationResult(applyResult);
+          await recordJobStatus(config, jobWithUrl, terminal ? 'failed' : 'pending_apply', {
             score: existing.score || 0, decision: 'apply',
-            reason: applyResult.reason, retryCount: (existing.retryCount || 0) + 1
+            reason: applyResult.reason,
+            retryCount: terminal ? 3 : (existing.retryCount || 0) + 1,
+            terminal
           });
         }
         results.push(row);
@@ -168,7 +196,8 @@ export async function runJobHunt(config, options = {}) {
         candidateProfile: profile,
         resumeText,
         localAnalysis: local,
-        aiAnalysis: gemini
+        aiAnalysis: gemini,
+        config
       });
 
       // AI-Powered Resume & Cover Letter Tailoring
@@ -270,6 +299,13 @@ export async function runJobHunt(config, options = {}) {
               optimizer,
               application: applyResult
             });
+            // A live attempt can fail safely after the initial review message was
+            // sent. Notify again so the user can act on the manual-review reason.
+            await sendReviewNotification({
+              ...job,
+              reviewReason: applyResult.reason || 'Application requires manual review.'
+            }, optimizer.application_score, config);
+            await appendLog(`Queued for manual review: ${job.title} - ${applyResult.reason}`, config);
           } else {
             await recordJobStatus(config, job, 'failed', {
               score: optimizer.application_score,
@@ -332,6 +368,7 @@ export async function runJobHunt(config, options = {}) {
     }
 
   await appendLog('Run finished', config);
+  results.runSummary = runSummary;
   return results;
 }
 
@@ -362,13 +399,26 @@ function autoApplyLimitReason(budget) {
 export async function flushPendingApplyQueue(config, autoApplyBudget = createAutoApplyBudget(config)) {
   // Auto-apply queue flushing re-enabled after successful BruntWork pipeline test (2026-05-30)
 
+  const summary = {
+    queued: 0,
+    attempts: 0,
+    applied: 0,
+    manualReview: 0,
+    failed: 0,
+    blocked: 0,
+    held: 0,
+    pending: 0
+  };
   const store = await loadJobStore(config);
   const pending = (store.jobs || []).filter((j) => j.status === 'pending_apply');
-  if (pending.length === 0) return;
+  summary.queued = pending.length;
+  if (pending.length === 0) return summary;
+  let profile = null;
   await appendLog(`Flushing ${pending.length} Telegram-approved job(s)`, config);
   for (const record of pending) {
     if (!canAttemptAutoApply(autoApplyBudget)) {
       await appendLog(`Pending apply held: ${record.title} - ${autoApplyLimitReason(autoApplyBudget)}`, config);
+      summary.held += 1;
       break;
     }
     // Normalise: jobStore saves applicationUrl as job_url — resolve both
@@ -379,6 +429,20 @@ export async function flushPendingApplyQueue(config, autoApplyBudget = createAut
     if (!job.applicationUrl) {
       await appendLog(`SKIPPED (no applicationUrl): ${job.title}`, config);
       await upsertJobRecord(config, job, 'failed', { reason: 'No applicationUrl found in stored record.' });
+      summary.failed += 1;
+      continue;
+    }
+    profile ||= await loadOrBuildCandidateProfile(config);
+    const applyGate = await validateLiveSubmitReadiness({ job, profile, existing: record, config });
+    if (!applyGate.ready) {
+      await appendLog(`Pending apply blocked by final gate: ${job.title} - ${applyGate.reason}`, config);
+      await upsertJobRecord(config, job, 'reviewed', {
+        score: job.score || 0,
+        decision: 'review',
+        acceptedViaTelegram: record.acceptedViaTelegram === true,
+        skippedBecause: applyGate.reason
+      });
+      summary.blocked += 1;
       continue;
     }
     await appendLog(`Telegram-accepted job: ${job.title} — applying now (${job.applicationUrl})`, config);
@@ -388,25 +452,148 @@ export async function flushPendingApplyQueue(config, autoApplyBudget = createAut
       applicationAnswers: record.application_answers || record.improved_answers || record.applicationAnswers || {}
     };
     consumeAutoApplyAttempt(autoApplyBudget);
+    summary.attempts += 1;
     const applyResult = await withRetry(() => attemptApplication(job, appPackage, config), {
       retries: 2, delayMs: 5000, backoff: 'exponential'
     });
     if (applyResult.outcome === ApplicationOutcome.APPLIED_SUCCESSFULLY) {
+      summary.applied += 1;
       await upsertJobRecord(config, job, 'applied', {
         score: job.score || 0, decision: 'apply',
         acceptedViaTelegram: true, appliedAt: new Date().toISOString()
       });
       await appendLog(`APPLIED: ${job.title} (Telegram-approved)`, config);
+    } else if (applyResult.outcome === ApplicationOutcome.REQUIRES_MANUAL_REVIEW) {
+      summary.manualReview += 1;
+      await upsertJobRecord(config, job, 'manual_review', {
+        score: job.score || 0,
+        decision: 'review',
+        acceptedViaTelegram: true,
+        reason: applyResult.reason,
+        retryCount: 3,
+        terminal: true
+      });
+      await appendLog(`MANUAL_REVIEW: ${job.title} — ${applyResult.reason} (automatic retries stopped)`, config);
     } else {
       const retryCount = (record.retryCount || 0) + 1;
-      const newStatus = retryCount >= 3 ? 'failed' : 'pending_apply';
+      const terminal = isTerminalApplicationResult(applyResult);
+      const effectiveRetryCount = terminal ? 3 : retryCount;
+      const newStatus = effectiveRetryCount >= 3 ? 'failed' : 'pending_apply';
+      if (newStatus === 'failed') summary.failed += 1;
+      else summary.pending += 1;
       await upsertJobRecord(config, job, newStatus, {
         score: job.score || 0, decision: 'apply',
-        reason: applyResult.reason, retryCount
+        reason: applyResult.reason,
+        retryCount: effectiveRetryCount,
+        terminal
       });
-      await appendLog(`${newStatus.toUpperCase()}: ${job.title} — ${applyResult.reason} (attempt ${retryCount}/3)`, config);
+      await appendLog(`${newStatus.toUpperCase()}: ${job.title} — ${applyResult.reason} (attempt ${effectiveRetryCount}/3)`, config);
     }
   }
+  return summary;
+}
+
+export async function validateLiveSubmitReadiness({ job, profile, existing = {}, config = {} }) {
+  const applicationScore = bestStoredApplicationScore(existing);
+  const liveSubmitFloor = Number.parseInt(config.applicationReviewScoreFloor, 10);
+  const effectiveLiveSubmitFloor = Number.isFinite(liveSubmitFloor) ? liveSubmitFloor : 55;
+
+  if (!isRemoteEligibleForLiveSubmit(job, config)) {
+    return {
+      ready: false,
+      reason: 'Remote-only live submit guard blocked this role because it does not show remote/work-from-home eligibility.'
+    };
+  }
+
+  if (!Number.isFinite(applicationScore) || applicationScore <= effectiveLiveSubmitFloor) {
+    return {
+      ready: false,
+      reason: `Application score ${Number.isFinite(applicationScore) ? applicationScore : 'unknown'} is not above live-submit floor ${effectiveLiveSubmitFloor}.`
+    };
+  }
+
+  const highRisk = (existing.optimizer?.risk_flags || []).some((flag) => flag.severity === 'high');
+  if (highRisk) {
+    return {
+      ready: false,
+      reason: 'Optimizer high-risk flag blocks live submission.'
+    };
+  }
+
+  const verification = existing.gemini || {};
+  const manuallyApproved = isManualApplyApproval(existing);
+  if (verification.should_apply === false && !manuallyApproved) {
+    return {
+      ready: false,
+      reason: 'AI verification previously rejected live submission.'
+    };
+  }
+
+  const currentLocal = await localMatchJob(job, profile, config);
+  const storedLocal = existing.local || {};
+  const localScore = Number.parseInt(currentLocal.score, 10);
+  const storedLocalScore = Number.parseInt(storedLocal.score, 10);
+  const bestLocalScore = Math.max(
+    Number.isFinite(localScore) ? localScore : 0,
+    Number.isFinite(storedLocalScore) ? storedLocalScore : 0
+  );
+
+  const aligned = isProfileAlignedRole(config, job);
+  if (!aligned && (currentLocal.recommendation === 'ignore' || bestLocalScore < getAiConsiderationFloor(config))) {
+    return {
+      ready: false,
+      reason: `Current profile QA blocks live submit: ${currentLocal.reasons?.[0] || 'low local fit'}`
+    };
+  }
+
+  return { ready: true, reason: '' };
+}
+
+export function isRemoteEligibleForLiveSubmit(job = {}, config = {}) {
+  if (config.liveSubmitRemoteOnly === false || config.remoteOnlyLiveSubmit === false) return true;
+
+  const source = String(job.source_site || job.source || '').toLowerCase();
+  if (source === 'bruntwork') return true;
+
+  const rawText = typeof job.raw === 'string'
+    ? job.raw
+    : JSON.stringify(job.raw || {});
+  const text = [
+    job.location,
+    job.workplaceType,
+    job.remoteType,
+    job.title,
+    job.description,
+    job.requirements,
+    rawText
+  ].filter(Boolean).join(' ').toLowerCase();
+
+  if (/\b(remote|work from home|work-from-home|wfh|telecommute|distributed|anywhere|worldwide)\b/i.test(text)) {
+    return true;
+  }
+
+  return job.raw?.remote === true || job.raw?.sourceRemoteDefault === true;
+}
+
+function isManualApplyApproval(record = {}) {
+  return (
+    record.acceptedViaTelegram === true ||
+    record.acceptedViaDashboard === true ||
+    /restaged for live retry/i.test(String(record.reason || ''))
+  );
+}
+
+function bestStoredApplicationScore(record = {}) {
+  const candidates = [
+    record.score,
+    record.optimizer?.application_score,
+    record.application_score,
+    record.analysis?.score
+  ]
+    .map((value) => Number.parseInt(value, 10))
+    .filter(Number.isFinite);
+
+  return candidates.length ? Math.max(...candidates) : NaN;
 }
 
 export function isNonEnglishJob(job) {
@@ -536,6 +723,12 @@ function statusForApplicationResult(applyResult) {
   return 'manual_review';
 }
 
+export function isTerminalApplicationResult(applyResult = {}) {
+  if (applyResult.outcome === ApplicationOutcome.REQUIRES_MANUAL_REVIEW) return true;
+  return /no longer accepting applications|applications? (?:are|is) closed|(?:job|role|position) (?:is |has been )?(?:closed|unavailable)|application (?:period|window) (?:has )?(?:closed|ended)/i
+    .test(String(applyResult.reason || ''));
+}
+
 // Gateway sources resolve to a third-party ATS at apply time; they auto-apply
 // only when ALLOW_GATEWAY_AUTO_SUBMIT is on, and only hand off to audited
 // downstream adapters (the adapter + atsResolver enforce the rest).
@@ -608,16 +801,16 @@ export function getReviewPromotion(config, job, local, verification, optimizer, 
   const applicationScore = Number.parseInt(optimizer?.application_score, 10);
   const verifierApproved = verification?.should_apply === true;
   const noHighRisk = !(optimizer?.risk_flags || []).some((flag) => flag.severity === 'high');
+  const threshold = Number.isFinite(config.autoApplyScoreThreshold) ? config.autoApplyScoreThreshold : 55;
 
   if (
-    verifierApproved &&
     noHighRisk &&
     Number.isFinite(localScore) &&
     localScore >= 40 &&
     Number.isFinite(adjustedScore) &&
-    adjustedScore >= 65 &&
+    adjustedScore >= threshold &&
     Number.isFinite(applicationScore) &&
-    applicationScore >= 65
+    applicationScore >= threshold
   ) {
     return {
       promoted: true,
@@ -644,7 +837,7 @@ export function isProfileAlignedRole(config = {}, job = {}) {
 
   if (profileName.includes('sister')) {
     if (source === 'influx') return false;
-    return /\b(customer support|customer service|customer success|virtual assistant|administrative assistant|admin assistant|executive assistant|crm|hubspot|zendesk|data entry|calendar|lead generation|lead qualification|appointment setter|sales support|business development|operations coordinator|marketing assistant|client success|telemarketer|outbound)\b/i.test(text);
+    return /\b(customer support|customer service|customer success|virtual assistant|va assistant|administrative assistant|admin assistant|executive assistant|crm|hubspot|zendesk|data entry|calendar|lead generation|lead qualification|appointment setter|sales support|sales pipeline|business development|operations coordinator|marketing assistant|client success|telemarketer|outbound)\b/i.test(text);
   }
 
   return false;
