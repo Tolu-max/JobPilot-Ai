@@ -164,15 +164,22 @@ function isSisterProfile(profileName, profile = {}) {
 }
 
 function assessToluRoleFit(title, corpus) {
-  const genericAdminRole = /\b(admin|administrative|executive|personal|virtual|office|operations|client|project|broker|inventory|front office)\s+(assistant|support|coordinator|administrator|specialist|clerk)\b|\b(virtual assistant|customer support|customer service|data entry|appointment setter|receptionist|front desk|office assistant|office admin|calendar management|client communications?)\b/i;
-  const technicalWebEvidence = /\b(seo|technical seo|shopify|wordpress|webflow|website|web site|web admin|website admin|website administrator|web developer|frontend|front end|backend|full stack|full-stack|javascript|node\.?js|html|css|cms|e-?commerce)\b/i;
-  const titleTechnicalEvidence = /\b(seo|technical seo|shopify|wordpress|webflow|website|web site|web admin|website admin|website administrator|web developer|frontend|front end|backend|full stack|full-stack|javascript|node\.?js|html|css|cms|e-?commerce)\b/i;
+  const genericAdminRole = /\b(admin|administrative|executive|personal|virtual|office|operations|client|project|broker|inventory|front office|data collection)\s+(assistant|support|coordinator|administrator|specialist|clerk)\b|\b(virtual assistant|customer support|customer service|data entry|appointment setter|receptionist|front desk|office assistant|office admin|calendar management|client communications?)\b/i;
+  const technicalWebEvidence = /\b(seo|technical seo|shopify|wordpress|webflow|web admin|website admin|website administrator|web developer|frontend|front end|backend|full stack|full-stack|javascript|node\.?js|html|css|cms|e-?commerce)\b/i;
+  const titleTechnicalEvidence = /\b(seo|technical seo|shopify|wordpress|webflow|web admin|website admin|website administrator|web developer|frontend|front end|backend|full stack|full-stack|javascript|node\.?js|html|css|cms|e-?commerce)\b/i;
   const salesOrSupportTitle = /\b(sales support|sales associate|sales representative|sales development|business development|sdr|bdr|telemarketer|telemarketing|cold calling|support associate|support specialist|customer support|customer service|client support|client success)\b/i;
+
+  if (genericAdminRole.test(title) && !titleTechnicalEvidence.test(title)) {
+    return {
+      allowed: false,
+      reasons: ['Profile role QA: Tolu is limited to web, SEO, Shopify, WordPress, JavaScript, or technical website roles; generic admin/support title has no technical website evidence.']
+    };
+  }
 
   if (genericAdminRole.test(corpus) && !technicalWebEvidence.test(corpus)) {
     return {
       allowed: false,
-      reasons: ['Profile role QA: Tolu is limited to web, SEO, Shopify, WordPress, JavaScript, or technical website roles; generic admin/support title has no technical website evidence.']
+      reasons: ['Profile role QA: Tolu is limited to web, SEO, Shopify, WordPress, JavaScript, or technical website roles; generic admin/support role has no technical web evidence.']
     };
   }
 
