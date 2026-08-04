@@ -41,12 +41,20 @@ function matches(url) {
   return /bruntwork(careers)?\.co/i.test(url) || /apply\.bruntwork/i.test(url);
 }
 
+function isClosedJob(body) {
+  return /no longer accepting applications?|position is closed|this job has been closed|application period has ended|not accepting.*applications?|job.*closed/i.test(String(body || ''));
+}
+
 // --- step detection ---------------------------------------------------------
 
 async function getCurrentStep(page) {
   // Cheapest signal first: visible body text + url + visible inputs.
   const url = page.url();
   const body = await page.locator('body').innerText({ timeout: 2500 }).catch(() => '');
+
+  if (isClosedJob(body)) {
+    throw new Error('Job is no longer accepting applications.');
+  }
 
   // SUBMITTED first — if BruntWork rendered a success state we don't want to mistake it for a step.
   if (SUCCESS_TEXT_PATTERN.test(body)) {
@@ -61,12 +69,18 @@ async function getCurrentStep(page) {
   const submitVisible = await page.getByRole('button', { name: /submit\s*application/i }).first().isVisible({ timeout: 800 }).catch(() => false);
 
   // EMAIL vs DETAILS:
-  //  - EMAIL step: URL contains /apply, exactly one email input visible, no Submit Application button
+  //  - EMAIL step: URL contains /apply and has a visible email input, no Submit Application button
   //  - DETAILS step: URL contains /applications/{id}, lots of inputs visible, Submit Application present (possibly disabled)
   const onApplyRoute = /\/jobs\/[^/]+\/apply/i.test(url);
   const onApplicationRoute = /\/applications\/[A-Za-z0-9-]+/i.test(url);
 
-  // Count visible inputs (rough proxy)
+  const emailInputVisible = await page.locator('input[type="email"]').first().isVisible({ timeout: 800 }).catch(() => false);
+
+  if (onApplyRoute && emailInputVisible && !submitVisible) {
+    return FormStep.EMAIL;
+  }
+
+  // Count visible inputs (rough proxy) for DETAILS classification
   const visibleInputCount = await page.evaluate(() => {
     let n = 0;
     document.querySelectorAll('input, textarea, select').forEach((el) => {
@@ -75,10 +89,6 @@ async function getCurrentStep(page) {
     });
     return n;
   }).catch(() => 0);
-
-  if (onApplyRoute && visibleInputCount <= 2 && !submitVisible) {
-    return FormStep.EMAIL;
-  }
 
   if (onApplicationRoute || submitVisible || visibleInputCount >= 4) {
     if (captchaVisible && !submitVisible) return FormStep.CAPTCHA;
@@ -116,14 +126,10 @@ async function fillEmailStep(page, ctx) {
 }
 
 async function fillDetailsStep(page, ctx) {
-  // BruntWork pre-fills general info (name, phone, city, country) from previous applications.
-  // DO NOT touch these fields — they're already correct.
-  // ONLY fill: Resume upload, Job questions (AI-generated), and other empty fields.
-
   const cv = ctx.candidate || {};
   const telemetry = getTelemetry(ctx);
 
-  // safeFill: only fill if field is currently empty
+  // safeFill: fill with synthetic input/change/blur events if field is currently empty or forced
   const safeFill = async (locator, value) => {
     if (!value) return false;
     try {
@@ -132,6 +138,9 @@ async function fillDetailsStep(page, ctx) {
         const current = await el.inputValue().catch(() => '');
         if (current && current.trim().length > 0) return false; // already filled, skip
         await el.fill(value);
+        await el.dispatchEvent('input', { bubbles: true }).catch(() => {});
+        await el.dispatchEvent('change', { bubbles: true }).catch(() => {});
+        await el.dispatchEvent('blur', { bubbles: true }).catch(() => {});
         await page.waitForTimeout(120);
         return true;
       }
@@ -139,7 +148,42 @@ async function fillDetailsStep(page, ctx) {
     return false;
   };
 
-  // Resume upload
+  // 1. Fill personal details if missing or empty
+  const fullName = cv.fullName || cv.name || `${cv.firstName || ''} ${cv.lastName || ''}`.trim();
+  const firstName = cv.firstName || (fullName ? fullName.split(' ')[0] : '');
+  const lastName = cv.lastName || (fullName ? fullName.split(' ').slice(-1)[0] : '');
+
+  await safeFill(page.locator('input[name="firstName"], input[placeholder*="First Name" i]'), firstName);
+  await safeFill(page.locator('input[name="lastName"], input[placeholder*="Last Name" i]'), lastName);
+  await safeFill(page.locator('input[name="fullLegalName"], input[placeholder*="Full Legal Name" i]'), fullName || `${firstName} ${lastName}`.trim());
+  await safeFill(page.locator('input[name="preferredName"], input[placeholder*="Preferred Name" i]'), firstName);
+  await safeFill(page.locator('input[name="mobileNumber"], input[placeholder*="Mobile" i]'), cv.phone || cv.mobileNumber || ctx.config?.phone || '');
+  await safeFill(page.locator('input[name="city"], input[placeholder*="City" i]'), cv.city || cv.location || 'Lagos');
+
+  // 2. Select Country if not already selected
+  try {
+    const countryBtn = page.locator('button[id*="_form-item"]:has-text("country"), button:has-text("Select a country")').first();
+    if (await countryBtn.isVisible({ timeout: 1500 }).catch(() => false)) {
+      const countryText = await countryBtn.innerText().catch(() => '');
+      if (!countryText || /select a country|select option/i.test(countryText)) {
+        await countryBtn.click();
+        await page.waitForTimeout(500);
+        const searchInput = page.locator('input[placeholder*="search" i], input[placeholder*="country" i]').first();
+        const countryTarget = cv.country || 'Nigeria';
+        if (await searchInput.isVisible({ timeout: 1000 }).catch(() => false)) {
+          await searchInput.fill(countryTarget);
+          await page.waitForTimeout(400);
+        }
+        const opt = page.locator(`[role="option"]:has-text("${countryTarget}"), [data-radix-collection-item]:has-text("${countryTarget}")`).first();
+        if (await opt.isVisible({ timeout: 1000 }).catch(() => false)) {
+          await opt.click();
+          console.log(`[bruntwork] Selected country: ${countryTarget}`);
+        }
+      }
+    }
+  } catch { /* country select not present or already set */ }
+
+  // 3. Resume upload
   try {
     if (ctx.resumePath) {
       const fileInputs = await page.locator('input[type="file"]').all();
@@ -152,13 +196,16 @@ async function fillDetailsStep(page, ctx) {
       }
       telemetry.resume.uploaded = telemetry.resume.uploadsSucceeded > 0;
       console.log(`[bruntwork] Resume upload: detected=${telemetry.resume.inputsDetected}, succeeded=${telemetry.resume.uploadsSucceeded}`);
-      await page.waitForTimeout(2000);
+      await page.waitForTimeout(1500);
     }
   } catch { /* ignore */ }
 
-  // Job-qualification textareas — use AI to generate human answers based on CV + question
+  // 4. Job-qualification textareas — use AI to generate human answers based on CV + question
   const textareas = await page.locator('textarea:visible').all();
+  const unansweredQuestions = [];
   for (const ta of textareas) {
+    const name = await ta.getAttribute('name').catch(() => '');
+    if (name.includes('recaptcha')) continue;
     const cur = await ta.inputValue().catch(() => '');
     if (cur && cur.trim().length > 0) continue; // already filled, skip
 
@@ -175,11 +222,28 @@ async function fillDetailsStep(page, ctx) {
     } catch { /* ignore */ }
 
     if (!question || question.trim().length === 0) continue; // no question found, skip
+    unansweredQuestions.push({ ta, question });
+  }
 
-    const answerResult = await answerApplicationQuestion(question, ctx, cv);
+  // AI response generation
+  const answerConcurrency = clampNumber(process.env.BRUNTWORK_ANSWER_CONCURRENCY, 3, 1, 5);
+  const generatedAnswers = await mapWithConcurrency(
+    unansweredQuestions,
+    answerConcurrency,
+    ({ question }) => answerApplicationQuestion(question, ctx, cv)
+  );
+
+  for (let index = 0; index < unansweredQuestions.length; index += 1) {
+    const { ta, question } = unansweredQuestions[index];
+    const answerResult = generatedAnswers[index];
     const answer = answerResult.answer;
     if (answer && answer.length > 20) {
-      const filled = await ta.fill(answer).then(() => true).catch(() => false);
+      const filled = await ta.fill(answer).then(async () => {
+        await ta.dispatchEvent('input', { bubbles: true }).catch(() => {});
+        await ta.dispatchEvent('change', { bubbles: true }).catch(() => {});
+        await ta.dispatchEvent('blur', { bubbles: true }).catch(() => {});
+        return true;
+      }).catch(() => false);
       if (filled) {
         telemetry.questions.answered += 1;
         telemetry.questions.items.push({
@@ -196,15 +260,35 @@ async function fillDetailsStep(page, ctx) {
   }
   telemetry.questions.visible = textareas.length;
 
-  // Voice recording link
+  // 5. Voice & Video recording links
   const voiceFilled = await safeFill(
-    page.locator('input[placeholder*="voice" i], input[placeholder*="recording" i], input[placeholder*="audio" i]'),
+    page.locator('input[name="voiceRecordingLink"], input[placeholder*="voice" i], input[placeholder*="recording" i], input[placeholder*="audio" i]'),
     cv.voiceRecordingUrl || ctx.config?.voiceRecordingUrl || ''
   );
   if (voiceFilled) telemetry.fields.voiceRecordingFilled += 1;
 
-  // Remaining selects (RAM dropdown etc.) — pick first non-empty option
+  await safeFill(
+    page.locator('input[name="videoRecordingLink"], input[placeholder*="video" i]'),
+    cv.videoRecordingUrl || ctx.config?.videoRecordingUrl || ''
+  );
+
+  // 6. RAM selection (Radix Combobox or native Select)
   try {
+    const ramCombobox = page.locator('button[role="combobox"]').first();
+    if (await ramCombobox.isVisible({ timeout: 1000 }).catch(() => false)) {
+      const btnText = await ramCombobox.innerText().catch(() => '');
+      if (/select option|select ram/i.test(btnText)) {
+        await ramCombobox.click();
+        await page.waitForTimeout(400);
+        const ramOpt = page.locator('[role="option"]:has-text("16 GB"), [role="option"]:has-text("More than 16GB"), [role="option"]:has-text("8 GB")').first();
+        if (await ramOpt.isVisible({ timeout: 1000 }).catch(() => false)) {
+          await ramOpt.click();
+          console.log('[bruntwork] Selected RAM option');
+          await page.waitForTimeout(300);
+        }
+      }
+    }
+
     const allSelects = await page.locator('select:visible').all();
     telemetry.fields.selectsSeen = allSelects.length;
     for (const sel of allSelects) {
@@ -218,9 +302,13 @@ async function fillDetailsStep(page, ctx) {
     }
   } catch { /* ignore */ }
 
-  // Salary fields
+  // 7. Salary fields (support text inputs with regex and number inputs)
   const currentRate = String(cv.currentSalary || ctx.config?.salary?.current || 800);
   const expectedRate = String(cv.expectedSalary || ctx.config?.salary?.expected || 1200);
+
+  await safeFill(page.locator('input[name="currentMonthlyPayRateUsd"], input[placeholder*="Current Salary" i]'), currentRate);
+  await safeFill(page.locator('input[name="expectedMonthlyPayRateUsd"], input[placeholder*="Expected Salary" i]'), expectedRate);
+
   const numInputs = await page.locator('input[type="number"]:visible').all();
   telemetry.fields.numberInputsSeen = numInputs.length;
   let nIdx = 0;
@@ -235,6 +323,23 @@ async function fillDetailsStep(page, ctx) {
   telemetry.fields.completedAt = new Date().toISOString();
   await persistTelemetry(ctx);
   await page.waitForTimeout(800);
+}
+
+async function mapWithConcurrency(items, concurrency, worker) {
+  const results = new Array(items.length);
+  let nextIndex = 0;
+
+  async function runWorker() {
+    while (nextIndex < items.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      results[index] = await worker(items[index], index);
+    }
+  }
+
+  const workerCount = Math.min(concurrency, items.length);
+  await Promise.all(Array.from({ length: workerCount }, () => runWorker()));
+  return results;
 }
 
 async function answerApplicationQuestion(question, ctx, cv) {
@@ -320,7 +425,63 @@ async function advance(page, step, ctx) {
   if (step === FormStep.DETAILS) {
     return clickSubmitApplication(page, ctx);
   }
+  if (step === FormStep.UNKNOWN) {
+    return openApplyPageFromJobPage(page, ctx);
+  }
   return { step, advanced: false, reason: `No advance handler for step ${step}.` };
+}
+
+async function openApplyPageFromJobPage(page, ctx) {
+  const currentUrl = normalizeUrl(page.url());
+  const baseUrl = normalizeUrl(ctx.job?.applicationUrl || currentUrl);
+  const applyUrl = /\/apply(\?|#|$)/i.test(baseUrl) ? baseUrl : baseUrl.replace(/\/?$/, '/apply');
+
+  if (!/bruntwork(careers)?\.co\/jobs\/[^/]+/i.test(applyUrl)) {
+    return { step: FormStep.UNKNOWN, advanced: false, reason: 'Not on a BruntWork job page; cannot navigate to apply form.' };
+  }
+
+  // Already on the apply URL; don't loop — let the caller decide if the page is truly unclassifiable.
+  if (applyUrl === currentUrl) {
+    return { step: FormStep.UNKNOWN, advanced: false, reason: 'Already on the computed apply URL but step is still unclassifiable.' };
+  }
+
+  try {
+    console.log(`[bruntwork] Navigating from job page to apply form: ${applyUrl}`);
+    await page.goto(applyUrl, { waitUntil: 'domcontentloaded', timeout: 30000 });
+    await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
+
+    // Wait for the BruntWork SPA to render the email form (or a clear success/already-applied state).
+    const settled = await Promise.race([
+      page.locator('input[type="email"]').first().waitFor({ state: 'visible', timeout: 15000 }).then(() => 'email'),
+      page.locator('body').innerText({ timeout: 3000 }).then((body) => {
+        if (/already (submitted|applied)|application (was )?successfully submitted|we (have|'ve|ve) received your application|thank you for your application|enhance your application|strengthen your application/i.test(body)) return 'submitted';
+        return null;
+      }),
+      new Promise((resolve) => setTimeout(() => resolve('timeout'), 15000))
+    ]);
+
+    if (settled === 'submitted') {
+      return { step: FormStep.SUBMITTED, advanced: true, reason: 'Navigated to apply URL and found already-submitted/success state.' };
+    }
+
+    await page.waitForTimeout(800);
+    return { step: FormStep.EMAIL, advanced: true, reason: 'Navigated from job page to apply form.' };
+  } catch (err) {
+    return { step: FormStep.UNKNOWN, advanced: false, reason: `Failed to navigate to apply form: ${err.message}` };
+  }
+}
+
+function normalizeUrl(value) {
+  if (!value) return '';
+  try {
+    const url = new URL(value);
+    url.hash = '';
+    url.search = '';
+    url.pathname = url.pathname.replace(/\/$/, '');
+    return url.toString().toLowerCase();
+  } catch {
+    return String(value).split(/[?#]/)[0].replace(/\/$/, '').toLowerCase();
+  }
 }
 
 async function clickContinue(page, ctx) {
