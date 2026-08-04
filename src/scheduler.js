@@ -39,6 +39,13 @@ let running = false;
 let activeConfigs = [];
 
 export async function startScheduler(argv = process.argv) {
+  try {
+    process.env.JOBPILOT_RESET_BRUNTWORK_ID = 'reset-aug04-v5';
+    await import('../scripts/ops/reset-bruntwork-jobs-once.mjs');
+  } catch (err) {
+    console.warn('[scheduler] Failed to run restage script: ' + err.message);
+  }
+
   await bootstrapProfilesFromEnv();
 
   const baseConfig = buildConfig(argv);
