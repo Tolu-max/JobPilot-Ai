@@ -8,6 +8,7 @@ echo "[bootstrap] JobPilot Railway entrypoint v2026-06-03-2"
 mkdir -p \
   /app/data/profiles \
   /app/data/logs \
+  /app/data/events \
   /app/data/review \
   /app/data/debug \
   /app/data/browser-profiles \
@@ -35,10 +36,15 @@ link_volume_dir() {
 
 link_volume_dir profiles
 link_volume_dir logs
+link_volume_dir events
 link_volume_dir review
 link_volume_dir debug
 link_volume_dir browser-profiles
 link_volume_dir test-results
+
+# Stale lock directories can survive a crash and then fail hard when the
+# volume is tight. Remove only generated lock dirs, never profile documents.
+find /app/data -name '*.lock' -type d -prune -exec rm -rf {} + 2>/dev/null || true
 
 if [ -n "${PROFILE_BUNDLE_URL:-}" ]; then
   echo "[bootstrap] PROFILE_BUNDLE_URL is set. Downloading profiles bundle..."
@@ -69,9 +75,14 @@ fi
 echo "[bootstrap] Profile files:"
 find /app/data/profiles -maxdepth 2 -type f -print 2>/dev/null | sed 's#^#  #' || true
 
-for profile in ${PROFILES:-}; do
-  profile="${profile//,/ }"
-  for name in $profile; do
+if [ "${WIPE_DB:-}" = "true" ]; then
+  echo "[bootstrap] WIPE_DB is true. Wiping processed jobs..."
+  node clearIgnored.js
+fi
+
+for item_profile in ${PROFILES:-}; do
+  item_profile="${item_profile//,/ }"
+  for name in $item_profile; do
     if [ "$name" != "example" ] && [ ! -f "/app/data/profiles/${name}/resume.pdf" ]; then
       echo "[bootstrap] Warning: /app/data/profiles/${name}/resume.pdf is missing."
     fi
@@ -79,5 +90,28 @@ for profile in ${PROFILES:-}; do
 done
 
 export JOBPILOT_PROFILE_BOOTSTRAPPED=1
+
+# Optional, restart-safe maintenance hook for Railway operations. The marker
+# in /app/data/maintenance makes this safe across deploy restarts; after the
+# requested task completes, normal scheduler startup continues unchanged.
+if [ -n "${JOBPILOT_BRUNTWORK_RECHECK_ID:-}" ]; then
+  echo "[bootstrap] Running requested BruntWork recheck: ${JOBPILOT_BRUNTWORK_RECHECK_ID}"
+  node ./scripts/ops/run-bruntwork-recheck-once.mjs
+fi
+
+if [ -n "${JOBPILOT_BRUNTWORK_LIVE_RERUN_ID:-}" ]; then
+  echo "[bootstrap] Running requested live BruntWork rerun: ${JOBPILOT_BRUNTWORK_LIVE_RERUN_ID}"
+  node ./scripts/ops/run-bruntwork-live-rerun-once.mjs
+fi
+
+if [ -n "${JOBPILOT_RESTAGE_INCOMPLETE_BRUNTWORK_ID:-}" ]; then
+  echo "[bootstrap] Restaging requested incomplete BruntWork drafts: ${JOBPILOT_RESTAGE_INCOMPLETE_BRUNTWORK_ID}"
+  node ./scripts/ops/restage-incomplete-bruntwork-tolu-once.mjs
+fi
+
+if [ -n "${JOBPILOT_RESET_BRUNTWORK_ID:-}" ]; then
+  echo "[bootstrap] Resetting failed/reviewed BruntWork jobs: ${JOBPILOT_RESET_BRUNTWORK_ID}"
+  node ./scripts/ops/reset-bruntwork-jobs-once.mjs
+fi
 
 exec "$@"
