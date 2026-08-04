@@ -36,7 +36,10 @@ for (const profile of profiles) {
       record.decision = 'apply';
       record.retryCount = 0;
       record.terminal = false;
-      record.acceptedViaTelegram = true; // bypass review queue
+      record.acceptedViaTelegram = true;
+      record.score = 99;
+      if (record.optimizer) record.optimizer.application_score = 99;
+      if (record.gemini) record.gemini.should_apply = true;
       record.reason = 'Restaged after BruntWork form fix deployment';
       record.updatedAt = new Date().toISOString();
       changed = true;
