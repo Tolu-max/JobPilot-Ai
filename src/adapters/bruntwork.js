@@ -34,7 +34,7 @@ import {
 } from '../applicationAnswerGuard.js';
 
 const NAME = 'bruntwork';
-const SUCCESS_TEXT_PATTERN = /your application has been submitted|application (was )?successfully submitted|thank you for your application|we (have|'ve|ve) received your application|application is complete|enhance your application|our team is reviewing your profile|strengthen your application/i;
+const SUCCESS_TEXT_PATTERN = /your application has been submitted|application (was )?successfully submitted|thank you for your application|we (have|'ve|ve) received your application|application is complete/i;
 
 function matches(url) {
   if (!url) return false;
@@ -775,7 +775,7 @@ async function verifySubmission(ctx, options = {}) {
     const body = await page.locator('body').innerText({ timeout: 3000 }).catch(() => '');
 
     // Strong CONFIRMED markers: BruntWork tells us we've already applied / submitted
-    if (/already (submitted|applied)|application (was )?successfully submitted|we (have|'ve|ve) received your application|thank you for your application|you have already submitted|enhance your application|our team is reviewing your profile|strengthen your application/i.test(body)) {
+    if (/already (submitted|applied)|application (was )?successfully submitted|we (have|'ve|ve) received your application|thank you for your application|you have already submitted/i.test(body)) {
       return { proof: Proof.CONFIRMED, markers: ['re-verify body matched already-submitted phrase'], reason: '' };
     }
     if (/\/applications\/[^/]+\/enhance(?:[/?#]|$)/i.test(afterUrl)) {
