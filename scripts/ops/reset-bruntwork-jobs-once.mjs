@@ -27,8 +27,12 @@ for (const profile of profiles) {
   for (const record of profileStore.jobs || []) {
     if (String(record.source_site || record.source || '').toLowerCase() !== 'bruntwork') continue;
     
-    // Only restage failed, manual_review, or reviewed jobs. Do NOT restage applied or ignored jobs.
-    if (['failed', 'manual_review', 'reviewed', 'pending_apply', 'pending'].includes(record.status)) {
+    // Restage jobs that are failed, review, OR applied within the last 48 hours
+    const isRecent = record.updatedAt && (Date.now() - new Date(record.updatedAt).getTime() < 48 * 60 * 60 * 1000);
+    const shouldRestage = ['failed', 'manual_review', 'reviewed', 'pending_apply', 'pending'].includes(record.status) 
+                          || (record.status === 'applied' && isRecent);
+                          
+    if (shouldRestage) {
       restagedJobs.push({ profile, title: record.title, previousStatus: record.status, url: record.job_url || record.applicationUrl });
       
       // Force it to apply again
