@@ -136,4 +136,9 @@ if [ -n "${JOBPILOT_RESET_SITE:-}" ]; then
   node ./scripts/ops/reset-site-jobs-once.mjs
 fi
 
+if [ -n "${JOBPILOT_SKIP_TITLES:-}" ]; then
+  echo "[bootstrap] Skipping requested profile titles"
+  node ./scripts/ops/skip-profile-titles-once.mjs
+fi
+
 exec "$@"
