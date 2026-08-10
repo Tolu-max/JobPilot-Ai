@@ -89,7 +89,7 @@
     "_disabled_reason": "Apply flow redirects to remoteok.com/sign-up wall; adapter cannot resolve an outbound apply destination. Queued jobs retried forever and burned scheduler cycles."
   },
   "workingnomads": {
-    "enabled": true,
+    "enabled": false,
     "priority": 50,
     "maxJobsPerRun": 40,
     "cooldownMinutes": 1,
@@ -174,7 +174,7 @@
     "_disabled_reason": "Temporarily paused while source freshness and application delivery are being improved."
   },
   "myjobmag": {
-    "enabled": true,
+    "enabled": false,
     "priority": 150,
     "maxJobsPerRun": 20,
     "cooldownMinutes": 1,
@@ -250,7 +250,7 @@
     "autoApplyEnabled": true
   },
   "realworkfromanywhere": {
-    "enabled": true,
+    "enabled": false,
     "priority": 235,
     "maxJobsPerRun": 40,
     "cooldownMinutes": 1,
