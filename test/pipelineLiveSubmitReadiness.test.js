@@ -189,6 +189,29 @@ test('validateLiveSubmitReadiness trusts remote-only feed sources', async () => 
   }
 });
 
+test('validateLiveSubmitReadiness trusts a known remote board URL when source metadata is missing', async () => {
+  const result = await validateLiveSubmitReadiness({
+    config: { profileName: 'tolu', applicationReviewScoreFloor: 70 },
+    profile: {
+      skills: ['JavaScript', 'React', 'web development'],
+      preferredRoles: ['Web Developer', 'Full Stack Developer']
+    },
+    job: {
+      title: 'Web developer',
+      applicationUrl: 'https://www.workingnomads.com/jobs/web-developer',
+      description: 'Build and maintain web applications with JavaScript and React.'
+    },
+    existing: {
+      score: 66,
+      acceptedViaTelegram: true,
+      local: { score: 75 },
+      optimizer: { application_score: 66, risk_flags: [] }
+    }
+  });
+
+  assert.equal(result.ready, true);
+});
+
 test('validateLiveSubmitReadiness lets explicit approval override stale AI rejection above floor', async () => {
   const result = await validateLiveSubmitReadiness({
     config: {

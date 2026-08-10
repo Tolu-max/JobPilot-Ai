@@ -628,6 +628,7 @@ export function isRemoteEligibleForLiveSubmit(job = {}, config = {}) {
   if (config.liveSubmitRemoteOnly === false || config.remoteOnlyLiveSubmit === false) return true;
 
   const source = String(job.source_site || job.source || '').toLowerCase();
+  const normalizedSource = source.replace(/[^a-z0-9]/g, '');
   // These scrapers only emit jobs that pass their source-level remote policy.
   // Trusting that invariant prevents sparse stored records from losing the
   // remote signal that was present in the original listing/API response.
@@ -638,7 +639,14 @@ export function isRemoteEligibleForLiveSubmit(job = {}, config = {}) {
     'workingnomads',
     'realworkfromanywhere'
   ]);
-  if (trustedRemoteSources.has(source)) return true;
+  if (trustedRemoteSources.has(normalizedSource)) return true;
+
+  // Review records can lose source_site during a store migration. Preserve
+  // the remote guarantee when the original trusted board URL is still present.
+  const applicationUrl = String(job.applicationUrl || job.job_url || job.url || '').toLowerCase();
+  if (/https?:\/\/(?:[^/]+\.)?(?:bruntworkcareers\.co|himalayas\.app|weworkremotely\.com|workingnomads\.com|realworkfromanywhere\.com)\//i.test(applicationUrl)) {
+    return true;
+  }
 
   const rawText = typeof job.raw === 'string'
     ? job.raw
