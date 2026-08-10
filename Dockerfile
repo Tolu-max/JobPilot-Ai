@@ -15,7 +15,7 @@ ENV NODE_ENV=production \
 WORKDIR /app
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends unzip \
+    && apt-get install -y --no-install-recommends dumb-init unzip \
     && rm -rf /var/lib/apt/lists/*
 
 # Install deps first to maximise Docker layer caching
@@ -29,7 +29,7 @@ COPY . .
 
 RUN chmod +x ./scripts/railway-entrypoint.sh
 
-ENTRYPOINT ["./scripts/railway-entrypoint.sh"]
+ENTRYPOINT ["dumb-init", "--", "./scripts/railway-entrypoint.sh"]
 
 # Default = the long-running scheduler. Override with:
 #   docker run ... jobpilot-cli node cli.js run --profile=sister

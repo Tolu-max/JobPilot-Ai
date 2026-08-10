@@ -1,71 +1,102 @@
 import Link from 'next/link';
-import { Code2, GitPullRequest, HeartHandshake, ShieldCheck, Terminal } from 'lucide-react';
 
-export const metadata = { title: 'About | JobPilot' };
+export const metadata = { title: 'About · JobPilot' };
 
 const principles = [
   {
-    icon: Terminal,
-    title: 'Terminal first',
-    body: 'Onboarding, local secrets, scheduling, and automation belong in the CLI where the user controls the environment.',
+    title: 'Local is not a checkbox — it&rsquo;s the architecture.',
+    body: 'Plenty of tools call themselves &ldquo;privacy-respecting&rdquo; then quietly upload your resume to embed it for matching. JobPilot is built the other way: the CLI is the source of truth, the web is a thin reflector, and the boundary between them is documented per data type. If a feature can&apos;t respect the boundary, it doesn&apos;t ship in that form.',
   },
   {
-    icon: ShieldCheck,
-    title: 'Hosted app second',
-    body: 'The web dashboard should handle safe metadata, approvals, analytics, docs, and account identity.',
+    title: 'Audited before automated.',
+    body: 'Submitting a form on your behalf is high-blast-radius. New ATSes ship in &ldquo;manual review&rdquo; mode by default and only graduate to auto-apply after the form quirks are mapped, a test fixture exists, and the trace is recorded. The cost of a bad apply is a real human looking at a bad application — we treat it that way.',
   },
   {
-    icon: GitPullRequest,
-    title: 'Contributors welcome',
-    body: 'New scrapers, ATS resolvers, tests, and provider adapters should be easy for open-source contributors to add.',
+    title: 'Cheap by design.',
+    body: 'The local matcher does the heavy lifting on free CPU. AI is a tiebreaker. Default routing is DeepSeek because it&apos;s sharp and pennies-per-month. A serious search should not cost you a hundred dollars in OpenAI bills — and if it does, something is wired wrong.',
   },
   {
-    icon: Code2,
-    title: 'Audits before submits',
-    body: 'Applying is high-impact. Unknown forms should be reviewed manually until the implementation is tested.',
+    title: 'Contributable in one afternoon.',
+    body: 'Adapters and scrapers are intentionally small. A new scraper is ~150 lines and a fixture. A new ATS adapter is ~300 lines and a recorded trace. The point is to keep the on-ramp low so coverage grows.',
+  },
+];
+
+const story = [
+  {
+    when: '2025',
+    what: 'Built it for one search.',
+    body: 'Spent a week of evenings hand-applying to ~80 roles. The pattern was obvious, repetitive, and a perfect target for a tool I could trust because I&apos;d written it. The first version was a Node script and a Telegram bot.',
+  },
+  {
+    when: 'early 2026',
+    what: 'Helped a sibling pivot.',
+    body: 'They needed something pointed at different boards with different filters. That forced the multi-profile rewrite and the dedup-across-profiles work. The dashboard came later when reviewing 40 roles a day on Telegram got annoying.',
+  },
+  {
+    when: 'mid 2026',
+    what: 'Open-sourced it.',
+    body: 'Other people kept asking if they could use it. Open source was the only honest answer — a job-application bot you can&apos;t audit is not a tool you should trust. The boundary between CLI and dashboard is what makes the open-sourcing safe.',
   },
 ];
 
 export default function AboutPage() {
   return (
     <div className="container section">
-      <div className="page-header" style={{ maxWidth: '820px' }}>
-        <span className="page-eyebrow"><HeartHandshake size={15} /> About</span>
-        <h1 className="heading-lg">JobPilot is an open-source job automation project with local-first boundaries.</h1>
+      <div className="page-header" style={{ maxWidth: 820 }}>
+        <span className="page-eyebrow">about</span>
+        <h1 className="heading-lg">JobPilot is what happened when one annoying job search turned into a tool, then into a small open project.</h1>
         <p className="text-body">
-          The goal is not to hide a black-box applicant bot behind a hosted dashboard. The goal is to give users and contributors a practical system they can inspect, run, improve, and trust.
+          It is not a startup. It is not trying to be the AI auto-apply bot. It is an honest, opinionated, MIT-licensed agent that does one thing well: pull jobs in, score them, and let you approve which ones get applied to — from your own machine, on your own terms.
         </p>
       </div>
 
-      <section className="panel" style={{ marginBottom: '28px' }}>
-        <h2 className="heading-md" style={{ marginBottom: 10 }}>Why the project exists</h2>
-        <p className="text-body">
-          Applying for remote work often means checking many boards, repeating forms, answering screening questions, and tracking what happened. JobPilot turns that into a pipeline: scrape, score, review, apply, and report.
-        </p>
+      <section style={{ marginBottom: 56 }}>
+        <div className="kicker" style={{ marginBottom: 14 }}>principles</div>
+        <h2 className="heading-md" style={{ marginBottom: 22, maxWidth: 720 }}>
+          Four things JobPilot will not trade away for growth.
+        </h2>
+        <div className="grid-2">
+          {principles.map((p) => (
+            <article key={p.title} className="panel" style={{ display: 'grid', gap: 12 }}>
+              <h3 className="heading-sm" style={{ fontFamily: 'IBM Plex Mono, monospace' }} dangerouslySetInnerHTML={{ __html: p.title }} />
+              <p className="muted" style={{ lineHeight: 1.7 }} dangerouslySetInnerHTML={{ __html: p.body }} />
+            </article>
+          ))}
+        </div>
       </section>
 
-      <div className="grid-4">
-        {principles.map((item) => {
-          const Icon = item.icon;
-          return (
-            <article key={item.title} className="card">
-              <Icon size={22} style={{ color: 'var(--accent-light)', marginBottom: 12 }} />
-              <h2 className="heading-sm" style={{ marginBottom: 8 }}>{item.title}</h2>
-              <p className="muted" style={{ lineHeight: 1.65 }}>{item.body}</p>
-            </article>
-          );
-        })}
-      </div>
+      <section style={{ marginBottom: 56 }}>
+        <div className="kicker" style={{ marginBottom: 14 }}>history</div>
+        <h2 className="heading-md" style={{ marginBottom: 22, maxWidth: 720 }}>
+          A short, honest origin story.
+        </h2>
 
-      <section className="panel" style={{ marginTop: '34px', display: 'grid', gridTemplateColumns: '1fr auto', gap: '18px', alignItems: 'center' }}>
+        <div className="changelog-rail">
+          {story.map((s) => (
+            <div key={s.when} className="changelog-item">
+              <div className="changelog-meta">
+                <span className="changelog-version">{s.when}</span>
+              </div>
+              <h3 className="changelog-title">{s.what}</h3>
+              <p className="muted" style={{ lineHeight: 1.7, maxWidth: 660 }} dangerouslySetInnerHTML={{ __html: s.body }} />
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <div className="cta-strip">
         <div>
-          <h2 className="heading-md" style={{ marginBottom: 8 }}>The next design target</h2>
-          <p className="muted" style={{ lineHeight: 1.65 }}>
-            Make terminal onboarding easier than the web app, then let the web dashboard focus on visibility and decisions.
+          <div className="kicker" style={{ marginBottom: 10 }}>get involved</div>
+          <h2 className="heading-md" style={{ marginBottom: 8 }}>If this is useful to you, file an issue. If it&apos;s broken, send a fix.</h2>
+          <p className="muted" style={{ maxWidth: 540 }}>
+            Coverage grows by users contributing scrapers for boards they care about. The contributor docs and code are deliberately small enough to read in an afternoon.
           </p>
         </div>
-        <Link href="/docs" className="button button-primary">Start with the CLI</Link>
-      </section>
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+          <Link href="https://github.com/Tolu-max/JobPilot-Ai" target="_blank" rel="noopener noreferrer" className="button button-primary">View on GitHub →</Link>
+          <Link href="/docs" className="button">Read the docs</Link>
+        </div>
+      </div>
     </div>
   );
 }

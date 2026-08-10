@@ -18,6 +18,22 @@ test('dedupe store records and skips completed jobs', async () => {
   assert.equal(shouldSkipProcessed(record), true);
 });
 
+test('job store preserves explicit retry counts and terminal records stay skipped', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'job-store-'));
+  const config = { jobStorePath: path.join(dir, 'processedJobs.json') };
+  const job = { title: 'Closed Role', applicationUrl: 'https://example.com/jobs/closed' };
+
+  await upsertJobRecord(config, job, 'pending_apply', { retryCount: 1 });
+  let record = await getJobRecord(config, job);
+  assert.equal(record.retryCount, 1);
+
+  await upsertJobRecord(config, job, 'failed', { retryCount: 3, terminal: true });
+  record = await getJobRecord(config, job);
+  assert.equal(record.retryCount, 3);
+  assert.equal(record.terminal, true);
+  assert.equal(shouldSkipProcessed(record), true);
+});
+
 test('resetProcessedJobs removes retryable records but preserves applied jobs', async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'job-store-'));
   const config = { profileName: 'tolu', jobStorePath: path.join(dir, 'processedJobs.json') };

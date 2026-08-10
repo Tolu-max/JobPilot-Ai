@@ -18,6 +18,10 @@ async function getCurrentStep(page, ctx = {}) {
     return FormStep.SUBMITTED;
   }
 
+  if (/method of application|send (your|the) cv|email your cv|apply via email/i.test(body) && !(await hasApplicationForm(page))) {
+    return FormStep.UNKNOWN;
+  }
+
   // If submit button was clicked and form is no longer present or disabled, transition to SUBMITTED
   const submitControl = page.locator('input[type="submit"], button[type="submit"]').first();
   const formVisible = await submitControl.isVisible({ timeout: 1000 }).catch(() => false);
@@ -34,6 +38,22 @@ async function getCurrentStep(page, ctx = {}) {
 }
 
 async function fillStep(page, step, ctx = {}) {
+  if (!(await hasApplicationForm(page))) return;
+
+  await page.locator('#apply-job-box').evaluate((element) => {
+    element.style.display = 'block';
+  }).catch(() => {});
+  await page.locator('#d-apply-form').scrollIntoViewIfNeeded().catch(() => {});
+
+  const candidate = ctx.candidate || ctx.config?.candidateProfile || {};
+  const defaults = ctx.config?.applicationDefaults || {};
+  const fullName = candidate.name || candidate.fullName || ctx.config?.displayName || 'Applicant';
+  const email = ctx.config?.applicantEmail || candidate.email || '';
+  const phone = candidate.phone || defaults.phone || '';
+  const location = String(candidate.location || defaults.location || defaults.city || '').split(',')[0].trim();
+  const title = ctx.job?.title || ctx.job?.raw?.title || 'the advertised role';
+  const coverLetter = ctx.coverLetter || candidate.summary || defaults.coverLetter || '';
+
   // 1. If an "Apply Now" or "Apply for this job" modal/toggle button exists on the page, click it to reveal fields
   const applyToggle = page.locator('a[href*="#apply"], button:has-text("Apply Now"), a:has-text("Apply Now"), .btn-apply, input[value*="Apply"]').first();
   if (await applyToggle.isVisible({ timeout: 2000 }).catch(() => false)) {
@@ -51,18 +71,20 @@ async function fillStep(page, step, ctx = {}) {
   }
 
   // 3. Fill required text/email/phone inputs
-  const applicantEmail = ctx.config?.applicantEmail || 'applicant@example.com';
-  const fullName = ctx.config?.candidateProfile?.fullName || ctx.config?.displayName || 'Applicant';
-
-  const nameInput = page.locator('input[name*="name"], input[placeholder*="Name"], #name').first();
+  const nameInput = page.locator('#d-apply-form input[name="sender_name"]');
   if (await nameInput.isVisible({ timeout: 1500 }).catch(() => false)) {
     await nameInput.fill(fullName).catch(() => {});
   }
 
-  const emailInput = page.locator('input[type="email"], input[name*="email"], input[placeholder*="Email"]').first();
+  const emailInput = page.locator('#d-apply-form input[name="sender_email"]');
   if (await emailInput.isVisible({ timeout: 1500 }).catch(() => false)) {
-    await emailInput.fill(applicantEmail).catch(() => {});
+    await emailInput.fill(email).catch(() => {});
   }
+
+  await page.locator('#d-apply-form input[name="sender_phone"]').fill(phone).catch(() => {});
+  if (location) await page.locator('#d-apply-form select[name="sender_location"]').selectOption({ label: location }).catch(() => {});
+  await page.locator('#d-apply-form input[name="apply_subject"]').fill(`Application for ${title}`).catch(() => {});
+  await page.locator('#d-apply-form textarea[name="apply_body"]').fill(coverLetter).catch(() => {});
 
   // 4. Fill radio buttons or select dropdowns if any exist
   const radios = page.locator('input[type="radio"]');
@@ -79,6 +101,22 @@ async function fillStep(page, step, ctx = {}) {
 }
 
 async function advance(page, step, ctx = {}) {
+  if (!(await hasApplicationForm(page))) {
+    return {
+      step: FormStep.REVIEW,
+      advanced: false,
+      reason: 'MyJobMag exposes employer email/manual application instructions; automatic submission is blocked.'
+    };
+  }
+
+  if (ctx.config?.testMode || ctx.config?.noRealSubmission) {
+    return {
+      step: FormStep.REVIEW,
+      advanced: false,
+      reason: 'NO_REAL_SUBMISSION/TEST_MODE: MyJobMag form filled and stopped before Send Application.'
+    };
+  }
+
   const submitControl = page.locator(
     'input[type="submit"][name*="apply"], input[type="submit"][name*="sub"], button[type="submit"], input[value*="Apply"], input[value*="Submit"], .mag-sub-btn, #sub_btn'
   ).first();
@@ -93,13 +131,15 @@ async function advance(page, step, ctx = {}) {
 
 async function isSubmitted(page) {
   const body = await bodyText(page);
-  const submitControl = page.locator('input[type="submit"], button[type="submit"]').first();
-  const formVisible = await submitControl.isVisible({ timeout: 1000 }).catch(() => false);
 
-  if (SUBMITTED_RE.test(body) || !formVisible) {
+  if (SUBMITTED_RE.test(body)) {
     return proofFound(['MyJobMag form application submitted successfully']);
   }
   return noProof('No confirmation text detected on MyJobMag page.');
+}
+
+async function hasApplicationForm(page) {
+  return (await page.locator('form#d-apply-form input[type="file"]').count().catch(() => 0)) > 0;
 }
 
 async function verifySubmission(ctx = {}) {

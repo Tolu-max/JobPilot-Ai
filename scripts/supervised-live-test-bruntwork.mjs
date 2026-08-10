@@ -23,7 +23,7 @@ const cvData = JSON.parse(readFileSync(`${SISTER_PROFILE}/cv-data.json`, 'utf8')
 // Pick a fresh BruntWork job that hasn't been applied to yet
 const job = {
   title: 'Fresh BruntWork Job #3 (SUPERVISED LIVE TEST)',
-  applicationUrl: 'https://apply.bruntworkcareers.co/jobs/56016234558',
+  applicationUrl: 'https://apply.bruntworkcareers.co/jobs/59668693005',
   source_site: 'bruntwork',
   company: 'BruntWork'
 };

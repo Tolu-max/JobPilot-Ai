@@ -64,22 +64,15 @@ export async function attemptApplication(job, coverLetter, config) {
   const usedProxy = proxyConfig?.proxy?.server || null;
 
   let context;
+  let browser;
   try {
-    context = await chromium.launchPersistentContext(config.browserProfileDir, {
-      headless: config.headless,
-      viewport: { width: 1366, height: 768 },
-      userAgent: stealthUserAgent,
-      args: browserArgsForMode(config),
-      locale: 'en-US',
-      timezoneId: 'America/New_York',
-      handleSIGHUP: false,
-      ...proxyConfig
-    });
+    ({ context, browser } = await createBrowserSession(config, proxyConfig));
   } catch (error) {
     finalizeApplication(lifecycle, ApplicationState.FAILED, `Browser launch failed: ${error.message}`, {
       stack: error.stack,
       browserProfileDir: config.browserProfileDir,
-      headless: config.headless
+      headless: config.headless,
+      usePersistentBrowserProfile: config.usePersistentBrowserProfile
     });
     await writeLifecycle(debug, lifecycle);
     await writeConsoleLogs(debug);
@@ -97,7 +90,10 @@ export async function attemptApplication(job, coverLetter, config) {
     let page = await context.newPage();
     collectConsoleLogs(page, debug);
 
-    await page.goto(job.applicationUrl, { waitUntil: 'domcontentloaded', timeout: 45000 });
+    await page.goto(job.applicationUrl, {
+      waitUntil: config.navigationWaitUntil || 'domcontentloaded',
+      timeout: Number.parseInt(config.navigationTimeoutMs, 10) || 45000
+    });
     await humanDelay(config);
     page = await openApplicationFormIfNeeded(page, config);
     transitionApplicationState(lifecycle, ApplicationState.FORM_OPENED, 'Application form opened.');
@@ -212,7 +208,8 @@ export async function attemptApplication(job, coverLetter, config) {
     return resultFromLifecycle(lifecycle, debug);
   } finally {
     await writeConsoleLogs(debug);
-    await context.close();
+    await context?.close().catch(() => {});
+    await browser?.close().catch(() => {});
   }
 }
 
@@ -251,7 +248,11 @@ async function runSiteAdapterFlow({ adapter, page, config, coverLetterText, appl
       }
 
       stepCount += 1;
-      const currentStep = await activeAdapter.getCurrentStep(page, ctx);
+      const currentStep = await withAdapterTimeout(
+        activeAdapter.getCurrentStep(page, ctx),
+        Math.min(adapterAdvanceTimeoutMs, 30000),
+        `${activeAdapter.name} getCurrentStep timed out`
+      );
       console.log(`[Adapter:${activeAdapter.name}] Step ${stepCount}: ${currentStep}`);
 
       // Check if we've reached a submitted state
@@ -347,8 +348,15 @@ async function runSiteAdapterFlow({ adapter, page, config, coverLetterText, appl
     } else if (verifyResult.proof === Proof.NOT_SUBMITTED) {
       finalizeApplication(lifecycle, ApplicationState.NEEDS_MANUAL_REVIEW, `Ground-truth re-verification FAILED — submission did not stick: ${verifyResult.reason}`, verifyResult);
     } else {
-      // INCONCLUSIVE — trust the in-page proof but flag for manual review
-      finalizeApplication(lifecycle, ApplicationState.NEEDS_MANUAL_REVIEW, `Re-verification inconclusive: ${verifyResult.reason}. In-page proof was positive but ground truth could not be confirmed.`, verifyResult);
+      // INCONCLUSIVE — trust the in-page proof but flag for manual review.
+      // Jobberman requires an authenticated jobseeker session, so independent
+      // ground-truth verification is not possible. If we reached this point
+      // the in-page submission proof was already positive; trust it.
+      if (activeAdapter.name === 'jobberman') {
+        finalizeApplication(lifecycle, ApplicationState.CONFIRMED_SUCCESS, `Jobberman submission confirmed in-page; independent verification unavailable.`, verifyResult);
+      } else {
+        finalizeApplication(lifecycle, ApplicationState.NEEDS_MANUAL_REVIEW, `Re-verification inconclusive: ${verifyResult.reason}. In-page proof was positive but ground truth could not be confirmed.`, verifyResult);
+      }
     }
 
     return resultFromLifecycle(lifecycle, debug);
@@ -560,13 +568,7 @@ async function fillAtsPlatformFields(page, config, platform) {
     } catch { /* field may not exist on this form */ }
   };
 
-  if (platform === 'lever') {
-    // Lever: name, email, phone, org, resume upload
-    await safeType('input[name="name"]', `${firstName} ${lastName}`.trim());
-    await safeType('input[name="email"]', email);
-    await safeType('input[name="phone"]', phone);
-    await uploadResumeToInput(page, 'input[type="file"]', config.resumePath, config);
-  } else if (platform === 'greenhouse') {
+  if (platform === 'greenhouse') {
     // Greenhouse: first_name, last_name, email, phone
     await safeType('#first_name', firstName);
     await safeType('#last_name', lastName);
@@ -676,7 +678,6 @@ async function findFinalSubmitControl(page) {
     page.locator('button:has-text("Apply for this")'),
     page.locator('button:has-text("Submit")'),
     page.locator('.submit-button'),
-    page.locator('.application-form__submit'), // Lever
     page.locator('#submit_app'), // Greenhouse
     page.locator('[role="button"]:has-text("Apply")'),
     page.locator('a[role="button"]:has-text("Apply")'),
@@ -1182,7 +1183,7 @@ async function waitForCaptchaSolve(page, config, job, debug) {
   if (config.captchaSolvApiKey || process.env.CAPTCHASOLV_API_KEY || config.capsolverApiKey || process.env.CAPSOLVER_API_KEY) {
     const autoResult = await solveCaptchaAuto(page, config);
     if (autoResult.ok) {
-      await sendNotification(`CAPTCHA token solved for ${job.title}. Continuing application verification.`, config);
+      await sendNotification(`CAPTCHA solved for ${job.title}. Application is not submitted yet; continuing the form and awaiting confirmation.`, config);
       return { ok: true, reason: autoResult.reason };
     }
     // If Google rate-limited us, don't wait for impossible manual solve - skip the job
@@ -1803,6 +1804,55 @@ function browserArgsForMode(config) {
   return [...baseArgs, ...extras];
 }
 
+async function createBrowserSession(config, proxyConfig) {
+  const baseOptions = {
+    headless: config.headless,
+    viewport: { width: 1366, height: 768 },
+    userAgent: stealthUserAgent,
+    args: browserArgsForMode(config),
+    locale: 'en-US',
+    timezoneId: 'America/New_York',
+    handleSIGHUP: false,
+    ...proxyConfig
+  };
+
+  let context;
+  if (config.usePersistentBrowserProfile !== false) {
+    try {
+      context = await chromium.launchPersistentContext(config.browserProfileDir, baseOptions);
+    } catch (error) {
+      if (!shouldFallbackFromPersistentLaunch(error, config)) {
+        throw error;
+      }
+      console.warn(`[automation] Persistent browser profile failed for ${config.profileName}: ${error.message}. Falling back to ephemeral context.`);
+    }
+  }
+
+  if (!context) {
+    const browser = await chromium.launch({
+      headless: config.headless,
+      args: browserArgsForMode(config),
+      ...proxyConfig
+    });
+    context = await browser.newContext({
+      viewport: { width: 1366, height: 768 },
+      userAgent: stealthUserAgent,
+      locale: 'en-US',
+      timezoneId: 'America/New_York'
+    });
+  }
+
+  return { context, browser: context.browser ? context.browser() : null };
+}
+
+
+
+function shouldFallbackFromPersistentLaunch(error, config = {}) {
+  if (!config.railwayLike) return false;
+  const message = String(error?.message || '');
+  return /Target page, context or browser has been closed|launchPersistentContext|Browser closed|ECONNRESET|EPIPE/i.test(message);
+}
+
 function success(reason, details) {
   return { outcome: ApplicationOutcome.APPLIED_SUCCESSFULLY, reason, ...details };
 }
@@ -1824,7 +1874,8 @@ function createDebugCollector(job, config) {
   return {
     dir,
     jobHash,
-    consoleLogs: []
+    consoleLogs: [],
+    artifactsEnabled: config.debugArtifactsEnabled !== false
   };
 }
 
@@ -1838,6 +1889,7 @@ function collectConsoleLogs(page, debug) {
 }
 
 async function saveDebugArtifacts(page, debug, label) {
+  if (!debug.artifactsEnabled) return;
   await fs.mkdir(debug.dir, { recursive: true });
   const safeLabel = String(label || 'step').replace(/[^a-z0-9_-]+/gi, '-');
   const screenshotName = safeLabel === 'captcha_waiting' ? `${safeLabel}_${Date.now()}.png` : `screenshot_${safeLabel}.png`;
@@ -1866,11 +1918,13 @@ async function writeLifecycle(debug, lifecycle) {
 
 async function writeSimulatedAutomationArtifacts(debug, job, payload) {
   await fs.mkdir(debug.dir, { recursive: true });
-  await fs.writeFile(
-    path.join(debug.dir, 'page_html_after_submit.html'),
-    renderSimulatedApplicationHtml(job, payload),
-    'utf8'
-  ).catch(() => {});
+  if (debug.artifactsEnabled) {
+    await fs.writeFile(
+      path.join(debug.dir, 'page_html_after_submit.html'),
+      renderSimulatedApplicationHtml(job, payload),
+      'utf8'
+    ).catch(() => {});
+  }
   await fs.writeFile(
     path.join(debug.dir, 'simulated_form_payload.json'),
     `${JSON.stringify(

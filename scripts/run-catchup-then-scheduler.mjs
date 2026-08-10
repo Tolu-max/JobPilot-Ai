@@ -8,32 +8,26 @@ import { runJobHunt } from '../src/pipeline.js';
 import { checkEmailResponses } from '../src/responseTracker.js';
 import { bootstrapProfilesFromEnv } from '../src/profileBundleBootstrap.js';
 import { startScheduler } from '../src/scheduler.js';
+import { applyRuntimeRetention } from '../src/retention.js';
+import { runBruntWorkRecheckOnce } from './ops/run-bruntwork-recheck-once.mjs';
 
 const rootDir = path.dirname(fileURLToPath(new URL('../package.json', import.meta.url)));
 const dataDir = process.env.JOBPILOT_DATA_DIR || (process.env.RAILWAY_ENVIRONMENT ? '/app/data' : path.join(rootDir, 'data'));
 const catchupDir = path.join(dataDir, 'catchup');
-const catchupFlagPath = path.join(catchupDir, 'bruntwork-50-jobberman-40-2026-06-10-v4.json');
+const BRUNTWORK_CATCHUP_LIMIT = Number.parseInt(process.env.BRUNTWORK_CATCHUP_LIMIT || process.env.MAX_JOBS_PER_RUN || '50', 10);
+const JOBBERMAN_CATCHUP_LIMIT = 40;
+const catchupFlagPath = path.join(catchupDir, `bruntwork-${BRUNTWORK_CATCHUP_LIMIT}-jobberman-${JOBBERMAN_CATCHUP_LIMIT}-2026-06-24-v1.json`);
+const resetFlagPath = path.join(catchupDir, 'cleared-ignored-reviewed-2026-06-24-v1.json');
 
 const profileNames = parseProfiles(process.env.PROFILES || process.env.PROFILE || 'tolu,sister');
 const changedEnv = new Map();
 
-// Clear ignored/reviewed jobs before catchup
-for (const profile of profileNames) {
-  const jobsPath = path.join(dataDir, 'profiles', profile, 'processedJobs.json');
-  try {
-    const raw = await fs.readFile(jobsPath, 'utf8');
-    const d = JSON.parse(raw);
-    const before = d.jobs.length;
-    d.jobs = d.jobs.filter((j) => j.status === 'applied' || j.status === 'failed' || j.status === 'duplicate');
-    await fs.writeFile(jobsPath, JSON.stringify(d, null, 2));
-    console.log(`[catchup] ${profile}: cleared ignored/reviewed jobs. Kept ${d.jobs.length} of ${before}.`);
-  } catch (err) {
-    console.log(`[catchup] ${profile}: Could not clear jobs (maybe file doesn't exist yet).`, err.message);
-  }
-}
+await runStartupRetention();
+await clearIgnoredReviewedJobsOnce();
 
 await bootstrapProfilesFromEnv({ rootDir, logger: console });
 process.env.JOBPILOT_PROFILE_BOOTSTRAPPED = '1';
+await runBruntWorkRecheckOnce();
 await runCatchupOnce();
 restoreEnv();
 
@@ -54,7 +48,7 @@ async function runCatchupOnce() {
     status: 'started',
     startedAt,
     profiles: profileNames,
-    limits: { bruntwork: 50, jobberman: 40 }
+    limits: { bruntwork: BRUNTWORK_CATCHUP_LIMIT, jobberman: JOBBERMAN_CATCHUP_LIMIT }
   });
 
   console.log(`[catchup] Starting one-time BruntWork/Jobberman catch-up for ${profileNames.join(', ')}.`);
@@ -67,7 +61,7 @@ async function runCatchupOnce() {
     console.log(`[catchup:${profileName}] enabled=${config.enabledSites.join(',')} bruntwork=${config.sites.bruntwork?.maxJobsPerRun} jobberman=${config.sites.jobberman?.maxJobsPerRun}`);
 
     try {
-      await appendLog('One-time catch-up started: bruntwork=50, jobberman=40.', config);
+      await appendLog(`One-time catch-up started: bruntwork=${BRUNTWORK_CATCHUP_LIMIT}, jobberman=${JOBBERMAN_CATCHUP_LIMIT}.`, config);
       const rows = await runJobHunt(config);
       await checkEmailResponses(config).catch((err) => appendLog(`ResponseTracker error: ${err.message}`, config));
       const summary = summarizeRows(rows);
@@ -87,8 +81,53 @@ async function runCatchupOnce() {
     startedAt,
     completedAt: new Date().toISOString(),
     profiles: profileNames,
-    limits: { bruntwork: 50, jobberman: 40 },
+    limits: { bruntwork: BRUNTWORK_CATCHUP_LIMIT, jobberman: JOBBERMAN_CATCHUP_LIMIT },
     failures,
+    results
+  });
+}
+
+async function runStartupRetention() {
+  const config = buildConfig(['node', 'jobpilot', `--profile=${profileNames[0] || 'tolu'}`]);
+  await applyRuntimeRetention(config, console).catch((error) => {
+    console.warn(`[retention] Startup cleanup skipped before catch-up: ${error.message}`);
+  });
+}
+
+async function clearIgnoredReviewedJobsOnce() {
+  if (!readBoolean(process.env.JOBPILOT_CATCHUP_CLEAR_IGNORED_REVIEWED, true)) {
+    console.log('[catchup] Ignored/reviewed reset disabled by JOBPILOT_CATCHUP_CLEAR_IGNORED_REVIEWED.');
+    return;
+  }
+
+  await fs.mkdir(catchupDir, { recursive: true });
+  const existing = await readJson(resetFlagPath);
+  if (existing) {
+    console.log(`[catchup] Ignored/reviewed reset already completed at ${existing.completedAt || 'unknown'}; skipping.`);
+    return;
+  }
+
+  const results = [];
+  for (const profile of profileNames) {
+    const jobsPath = path.join(dataDir, 'profiles', profile, 'processedJobs.json');
+    try {
+      const raw = await fs.readFile(jobsPath, 'utf8');
+      const d = JSON.parse(raw);
+      const jobs = Array.isArray(d.jobs) ? d.jobs : [];
+      const before = jobs.length;
+      d.jobs = jobs.filter((j) => j.status === 'applied' || j.status === 'failed' || j.status === 'duplicate');
+      await fs.writeFile(jobsPath, `${JSON.stringify(d, null, 2)}\n`, 'utf8');
+      results.push({ profile, ok: true, before, kept: d.jobs.length });
+      console.log(`[catchup] ${profile}: cleared ignored/reviewed jobs. Kept ${d.jobs.length} of ${before}.`);
+    } catch (err) {
+      results.push({ profile, ok: false, error: err.message });
+      console.log(`[catchup] ${profile}: Could not clear jobs (maybe file doesn't exist yet).`, err.message);
+    }
+  }
+
+  await writeJson(resetFlagPath, {
+    completedAt: new Date().toISOString(),
+    profiles: profileNames,
     results
   });
 }
@@ -97,8 +136,8 @@ function applyCatchupEnv(profileName) {
   const prefix = profileName.toUpperCase().replace(/[^A-Z0-9]+/g, '_');
   setEnv(`${prefix}_ENABLED_SITES`, 'bruntwork,jobberman');
   setEnv(`${prefix}_SITE_PRIORITY`, 'bruntwork,jobberman');
-  setEnv(`${prefix}_BRUNTWORK_MAX_JOBS_PER_RUN`, '50');
-  setEnv(`${prefix}_JOBBERMAN_MAX_JOBS_PER_RUN`, '40');
+  setEnv(`${prefix}_BRUNTWORK_MAX_JOBS_PER_RUN`, String(BRUNTWORK_CATCHUP_LIMIT));
+  setEnv(`${prefix}_JOBBERMAN_MAX_JOBS_PER_RUN`, String(JOBBERMAN_CATCHUP_LIMIT));
   setEnv(`${prefix}_BRUNTWORK_COOLDOWN_MINUTES`, '0');
   setEnv(`${prefix}_JOBBERMAN_COOLDOWN_MINUTES`, '0');
   setEnv(`${prefix}_BRUNTWORK_AUTO_APPLY_ENABLED`, 'true');
@@ -124,6 +163,11 @@ function parseProfiles(value) {
     .map((name) => name.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, ''))
     .filter(Boolean);
   return names.length ? [...new Set(names)] : ['tolu', 'sister'];
+}
+
+function readBoolean(value, fallback = false) {
+  if (value === undefined || value === null || value === '') return Boolean(fallback);
+  return ['1', 'true', 'yes', 'on'].includes(String(value).trim().toLowerCase());
 }
 
 function summarizeRows(rows) {

@@ -1,9 +1,11 @@
 import { appendLog } from './logger.js';
-import { getJobRecord, upsertJobRecord, hashJob, loadJobStore } from './jobStore.js';
+import { getJobRecord, upsertJobRecord, hashJob, loadJobStore, loadGlobalJobStore } from './jobStore.js';
 import { stripHtml } from './utils.js';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { assertTelegramChatAllowed, resolveTelegramRecipient } from './notifications/router.js';
+import { hasRunner, isPaused, requestRun, setPaused } from './botControl.js';
+import { flushPendingApplyQueue } from './pipeline.js';
 
 const POLL_INTERVAL_MS = 3000;
 let lastUpdateId = 0;
@@ -12,7 +14,7 @@ let pollingActive = false;
 // Track how many review notifications sent per run to limit noise
 let reviewNotifCount = 0;
 let overflowCount = 0;
-const MAX_REVIEW_NOTIFS_PER_RUN = 15;
+const MAX_REVIEW_NOTIFS_PER_RUN = 50;
 const MIN_REVIEW_SCORE = 1;
 
 function getStateFile(config) {
@@ -62,12 +64,13 @@ function profileCallbackKey(config) {
 async function sendWithRateLimit(config, chatId, payload) {
   await sleep(350); // proactive spacing — Telegram allows ~30 msg/s but burst triggers 429
   const url = `https://api.telegram.org/bot${config.telegramBotToken}/sendMessage`;
+  const cleanPayload = sanitizeTelegramPayload(payload);
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       const response = await fetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ chat_id: chatId, ...payload })
+        body: JSON.stringify({ chat_id: chatId, ...cleanPayload })
       });
       if (response.status === 429) {
         const data = await response.json().catch(() => ({}));
@@ -77,6 +80,21 @@ async function sendWithRateLimit(config, chatId, payload) {
       }
       if (!response.ok) {
         const errText = await response.text().catch(() => '');
+        // A malformed upstream title/description must not suppress the review.
+        // Retry without Markdown so the notification still reaches Telegram.
+        if (response.status === 400 && cleanPayload.parse_mode) {
+          const fallbackPayload = { ...cleanPayload };
+          delete fallbackPayload.parse_mode;
+          const fallbackResponse = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ chat_id: chatId, ...fallbackPayload })
+          });
+          if (fallbackResponse.ok) {
+            await appendLog('Telegram Markdown rejected; delivered message as plain text.', config);
+            return fallbackResponse;
+          }
+        }
         await appendLog(`Telegram sendMessage failed (${response.status}): ${errText}`, config);
       }
       return response;
@@ -84,6 +102,46 @@ async function sendWithRateLimit(config, chatId, payload) {
       await appendLog(`Telegram sendMessage error: ${error.message}`, config);
     }
   }
+}
+
+function sanitizeTelegramPayload(payload = {}) {
+  return sanitizeTelegramValue(payload);
+}
+
+function sanitizeTelegramValue(value) {
+  if (typeof value === 'string') return cleanTelegramText(value);
+  if (Array.isArray(value)) return value.map(sanitizeTelegramValue);
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [key, sanitizeTelegramValue(item)])
+    );
+  }
+  return value;
+}
+
+const TELEGRAM_TEXT_REPLACEMENTS = [
+  ['•', '-'], ['…', '...'], ['—', '-'], ['≥', '>='], ['ℹ️', 'Info:'],
+  // Mojibake fallbacks for double-encoded upstream data (UTF-8 bytes interpreted as Latin-1)
+  ['\u00f0\u0178\u201c\u2039', ''], ['\u00f0\u0178\u201c\u00ad', ''], ['\u00f0\u0178\u201c\u009d', ''], ['\u00f0\u0178\u201c\u201e', ''], ['\u00f0\u0178\u201c\u0161', ''], ['\u00f0\u0178\u0152\u00c2\u00b8', ''], ['\u00f0\u0178\u017d\u00a2', ''], ['\u00f0\u0178\u00a4\u00e2\u20ac\u201c', ''],
+  ['\u00f0\u0178\u017f\u00a1', 'Review'], ['\u00f0\u0178\u017f\u00a2', 'Queued'], ['\u00e2\u02dc\u00b0\u00ef\u00b8\u2018', ''], ['\u00e2\u0153\u00a5', ''], ['\u00e2\u009d\u0152', ''], ['\u00e2\u0161\u00a0\u00ef\u00b8\u2018', 'Warning:'],
+  ['\u00e2\u00ad\u0090', 'Score:'], ['\u00e2\u008f\u00ad\u00ef\u00b8\u2018', 'Ignored:'], ['\u00f0\u0178\u201c\u2014', ''], ['\u00e2\u0153\u00a8', ''],
+  ['\u00e2\u20ac\u00a2', '-'], ['\u00e2\u20ac\u00a6', '...'], ['\u00e2\u20ac\u201d', '-'], ['\u00e2\u2030\u00a5', '>='], ['\u00e2\u201e\u00b9\u00ef\u00b8\u2018', 'Info:']
+];
+
+function cleanTelegramText(value) {
+  let cleaned = String(value || '');
+  for (const [pattern, replacement] of TELEGRAM_TEXT_REPLACEMENTS) {
+    cleaned = cleaned.split(pattern).join(replacement);
+  }
+  return cleaned
+    // Telegram accepts Unicode, but forcing ASCII prevents broken mojibake from
+    // incorrectly decoded job-board content or legacy notification templates.
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^\x00-\x7F]/g, '')
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 }
 
 /**
@@ -151,17 +209,22 @@ export async function sendOverflowSummary(config) {
 }
 
 function cleanDescription(raw) {
-  const stripped = stripHtml(raw);
+  const withoutPagePayloads = String(raw || '')
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/self\.__next_f\.push\([\s\S]*$/i, ' ');
+  const stripped = stripHtml(withoutPagePayloads);
   const lines = stripped
     .split('\n')
     .map((l) => l.replace(/\s+/g, ' ').trim())
-    .filter(Boolean);
+    .filter(Boolean)
+    .filter((line) => !/^self\.__next|^static\/chunks|^\(self\.__next|^\[?object Object\]?$/i.test(line));
   // Drop leading boilerplate lines before actual content
   const firstContentIdx = lines.findIndex((l) =>
     /job overview|about the role|about this role|responsibilities|requirements|qualifications|overview|position summary|role summary|the opportunity/i.test(l)
   );
   const contentLines = firstContentIdx > 0 ? lines.slice(firstContentIdx) : lines;
-  return contentLines.join('\n').trim();
+  return contentLines.join('\n').trim() || 'Job description unavailable. Open the job link for the complete posting.';
 }
 
 function formatDescriptionForTelegram(desc, maxChars = 3200) {
@@ -210,6 +273,7 @@ async function pollLoop(config, allConfigs) {
       const updates = await getUpdates(config);
       for (const update of updates) {
         if (update.callback_query) {
+          console.log(`[TelegramBot] Received callback ${update.callback_query.data || 'unknown'}`);
           await handleCallback(update.callback_query, config, allConfigs);
         } else if (update.message?.text) {
           await handleTextCommand(update.message, config, allConfigs);
@@ -232,11 +296,24 @@ async function getUpdates(config) {
     allowed_updates: JSON.stringify(['callback_query', 'message'])
   });
 
-  const response = await fetch(`${url}?${params}`, { signal: AbortSignal.timeout(15000) });
-  if (!response.ok) return [];
-
-  const data = await response.json();
-  return data.ok ? data.result : [];
+  try {
+    const response = await fetch(`${url}?${params}`, { signal: AbortSignal.timeout(15000) });
+    if (!response.ok) {
+      const errText = await response.text().catch(() => '');
+      await appendLog(`Telegram getUpdates failed (${response.status}): ${errText}`, config);
+      return [];
+    }
+    const data = await response.json();
+    if (!data.ok) {
+      await appendLog(`Telegram getUpdates API error: ${data.description || 'unknown'}`, config);
+      return [];
+    }
+    return data.result || [];
+  } catch (error) {
+    const label = error.name === 'AbortError' ? 'timed out' : `error: ${error.message}`;
+    await appendLog(`Telegram getUpdates ${label}`, config);
+    return [];
+  }
 }
 
 async function handleCallback(callbackQuery, config, allConfigs) {
@@ -246,6 +323,7 @@ async function handleCallback(callbackQuery, config, allConfigs) {
   const [action, profileName, jobHash] = data.split(':');
   const messageId = callbackQuery.message?.message_id;
   const chatId = callbackQuery.message?.chat?.id;
+  console.log(`[TelegramBot] Handling callback action=${action || 'unknown'} profile=${profileName || 'unknown'} hash=${jobHash || 'unknown'}`);
 
   if (!action || !profileName || !jobHash) {
     await answerCallback(config, callbackQuery.id, '⚠️ Invalid data');
@@ -260,7 +338,7 @@ async function handleCallback(callbackQuery, config, allConfigs) {
   }
 
   if (action === 'accept') {
-    const record = await findJobByHash(profileConfig, jobHash);
+    const record = await findJobByHash(profileConfig, jobHash, allConfigs);
     if (record) {
       // Store all fields needed for application — including applicationUrl from job_url
       await upsertJobRecord(profileConfig, record, 'pending_apply', {
@@ -271,12 +349,21 @@ async function handleCallback(callbackQuery, config, allConfigs) {
         applicationUrl: record.applicationUrl || record.job_url || ''
       });
       await answerCallback(config, callbackQuery.id, '✅ Queued for application!');
-      await editMessageButtons(config, chatId, messageId, '✅ ACCEPTED — will apply next run');
+      await editMessageButtons(config, chatId, messageId, '✅ ACCEPTED - will apply next run');
+      await appendLog('Telegram acceptance queued; waiting for the next scheduled run.', profileConfig);
+      try {
+        await flushPendingApplyQueue(profileConfig);
+        const updated = await findJobByHash(profileConfig, jobHash, allConfigs);
+        await sendTelegramApplicationResult(profileConfig, chatId, updated || record);
+      } catch (error) {
+        await sendTelegramMessage(profileConfig, chatId, `Application run failed: ${escapeMarkdown(error.message || 'unknown error')}\\.`);
+        await appendLog(`Telegram-approved application flush failed: ${error.stack || error.message}`, profileConfig);
+      }
     } else {
       await answerCallback(config, callbackQuery.id, '⚠️ Job not found in store');
     }
   } else if (action === 'reject') {
-    const record = await findJobByHash(profileConfig, jobHash);
+    const record = await findJobByHash(profileConfig, jobHash, allConfigs);
     if (record) {
       await upsertJobRecord(profileConfig, record, 'skipped', {
         decision: 'skip',
@@ -288,39 +375,46 @@ async function handleCallback(callbackQuery, config, allConfigs) {
     } else {
       await answerCallback(config, callbackQuery.id, '⚠️ Job not found');
     }
+  } else if (action === 'retry') {
+    const record = await findJobByHash(profileConfig, jobHash, allConfigs);
+    if (record) {
+      await upsertJobRecord(profileConfig, record, 'pending_apply', {
+        decision: 'apply',
+        acceptedViaTelegram: true,
+        acceptedAt: new Date().toISOString(),
+        retryCount: 0,
+        terminal: false,
+        applicationUrl: record.applicationUrl || record.job_url || ''
+      });
+      await answerCallback(config, callbackQuery.id, 'Retrying application');
+      await editMessageButtons(config, chatId, messageId, 'Retrying application');
+      try {
+        await flushPendingApplyQueue(profileConfig);
+        const updated = await findJobByHash(profileConfig, jobHash, allConfigs);
+        await sendTelegramApplicationResult(profileConfig, chatId, updated || record);
+      } catch (error) {
+        await sendTelegramMessage(profileConfig, chatId, `Application retry failed: ${escapeMarkdown(error.message || 'unknown error')}\\.`);
+      }
+    } else {
+      await answerCallback(config, callbackQuery.id, 'Job not found');
+    }
   } else if (action === 'details') {
-    const record = await findJobByHash(profileConfig, jobHash);
+    const record = await findJobByHash(profileConfig, jobHash, allConfigs);
     if (record) {
       await answerCallback(config, callbackQuery.id, '📄 Sending details...');
       await sendJobDetails(config, chatId, record, profileName);
     } else {
       await answerCallback(config, callbackQuery.id, '⚠️ Job not found');
     }
-  }
-}
-
-async function handleTextCommandLegacy(message, config, allConfigs) {
-  const text = (message.text || '').trim().toLowerCase();
-  const chatId = message.chat?.id;
-  if (!assertTelegramChatAllowed(config, chatId, { profile_id: config.profileName })) {
-    await appendLog(`Rejected Telegram command from unlinked chat ${chatId}`, config);
-    return;
-  }
-
-  if (text === '/reviews' || text === '/pending') {
-    await sendPendingReviews(config, chatId);
-  } else if (text === '/help' || text === '/start') {
-    await sendHelpMessage(config, chatId);
-  } else if (text === '/status' || text === '/stats') {
-    await sendStatusMessage(config, chatId);
-  } else if (text === '/approve_all') {
-    await approveAllJobs(config, chatId, 80);
-  } else if (text === '/approve_top') {
-    await approveTopJob(config, chatId);
-  } else if (text.startsWith('/approve_score')) {
-    // /approve_score 75  — approves all jobs above given score
-    const threshold = parseInt(text.split(/\s+/)[1], 10) || 80;
-    await approveAllJobs(config, chatId, threshold);
+  } else if (action === 'approve_all') {
+    const threshold = parseInt(jobHash, 10) || 80;
+    await answerCallback(config, callbackQuery.id, `✅ Approving reviewed jobs ≥ ${threshold}...`);
+    await approveAllJobs(profileConfig, chatId, threshold);
+    await editMessageButtons(config, chatId, messageId, '✅ All pending jobs approved');
+  } else if (action === 'approve_top') {
+    await answerCallback(config, callbackQuery.id, '✅ Approving top job...');
+    await approveTopJob(profileConfig, chatId);
+    await editMessageButtons(config, chatId, messageId, '✅ Top job approved');
   }
 }
 
@@ -330,6 +424,7 @@ async function handleTextCommand(message, config, allConfigs) {
   const chatId = message.chat?.id;
   const target = resolveCommandTarget(rawText, config, allConfigs);
   const targetConfig = target.config;
+  console.log(`[TelegramBot] Received command ${rawText} for ${targetConfig?.profileName || 'default'} from chat ${chatId}`);
 
   if (!assertTelegramChatAllowed(targetConfig, chatId, { profile_id: targetConfig.profileName })) {
     await appendLog(`Rejected Telegram command from unlinked chat ${chatId}`, targetConfig);
@@ -360,7 +455,55 @@ async function handleTextCommand(message, config, allConfigs) {
   } else if (target.command === '/approve_score') {
     const threshold = parseInt(target.args.find((part) => /^\d+$/.test(part)), 10) || 80;
     await approveAllJobs(targetConfig, chatId, threshold);
+  } else if (target.command === '/pause') {
+    setPaused(true);
+    await sendTelegramMessage(targetConfig, chatId, `*Paused* \\[${escapeMarkdown(profileLabel(targetConfig))}\\]\nScheduled runs will wait until /resume\\. Use /run to force one run now\\.`);
+  } else if (target.command === '/resume') {
+    setPaused(false);
+    await sendTelegramMessage(targetConfig, chatId, `*Resumed* \\[${escapeMarkdown(profileLabel(targetConfig))}\\]\nScheduled runs are active again\\.`);
+  } else if (target.command === '/run' || target.command === '/run_now') {
+    await runNowFromTelegram(targetConfig, chatId);
+  } else if (target.command === '/apply_pending' || target.command === '/flush_pending') {
+    await sendTelegramMessage(targetConfig, chatId, `Starting approved applications for *${escapeMarkdown(profileLabel(targetConfig))}*\\.\\.`);
+    try {
+      await flushPendingApplyQueue(targetConfig);
+      const store = await loadJobStore(targetConfig);
+      const pending = (store.jobs || []).filter((job) => job.status === 'pending_apply').length;
+      await sendTelegramMessage(targetConfig, chatId, `Approved application queue finished\\. Pending now: ${pending}\\.`);
+    } catch (error) {
+      await sendTelegramMessage(targetConfig, chatId, `Approved application queue failed: ${escapeMarkdown(error.message || 'unknown error')}\\.`);
+    }
   }
+}
+
+async function sendTelegramApplicationResult(config, chatId, record = {}) {
+  const status = String(record.status || 'unknown');
+  const title = escapeMarkdown(record.title || 'Job');
+  const url = record.job_url || record.applicationUrl || '';
+  if (status === 'applied') {
+    await sendTelegramMessage(config, chatId, `*Application confirmed*\n${title}`);
+    return;
+  }
+  const reason = record.reason || record.skippedBecause || 'The application was not submitted.';
+  const conciseReason = String(reason).replace(/[.!?]+\s*$/, '');
+  const label = status === 'manual_review'
+    ? 'Manual review required'
+    : status === 'reviewed'
+      ? 'Review retained'
+      : `Application status: ${status}`;
+  const buttons = [];
+  if (url) buttons.push([{ text: 'Open job', url }]);
+  if (status === 'manual_review') {
+    const profile = profileCallbackKey(config);
+    const hash = String(record.job_hash || '').slice(0, 16);
+    if (hash) buttons.push([{ text: 'Retry application', callback_data: `retry:${profile}:${hash}` }]);
+  }
+  await sendWithRateLimit(config, chatId, {
+    text: `*${escapeMarkdown(label)}*\n${title}\n${escapeMarkdown(conciseReason)}\\.`,
+    parse_mode: 'MarkdownV2',
+    disable_web_page_preview: true,
+    ...(buttons.length ? { reply_markup: { inline_keyboard: buttons } } : {})
+  });
 }
 
 function resolveCommandTarget(rawText, fallbackConfig, allConfigs) {
@@ -492,6 +635,8 @@ async function sendPendingReviews(config, chatId) {
       .slice(0, 10);
   } catch { /* empty */ }
 
+  console.log(`[TelegramBot] Pending reviews for ${config?.profileName || 'default'}: ${reviews.length}`);
+
   if (reviews.length === 0) {
     await sendTelegramMessage(config, chatId, '✨ No pending reviews\\! All caught up\\.');
     return;
@@ -506,34 +651,23 @@ async function sendPendingReviews(config, chatId) {
     msg += `${status} *${escapeMarkdown(job.title || 'Unknown')}* — Score: ${job.score || 0}\n`;
   }
 
-  // Send with buttons for top 3
-  const buttons = reviews.slice(0, 3).map((job) => [{
-    text: `${job.title?.slice(0, 25) || 'Job'}... (${job.score})`,
-    callback_data: `details:${callbackProfile}:${(job.job_hash || '').slice(0, 16)}`
-  }]);
+  // Put primary actions directly on the queue.
+  const buttons = reviews.slice(0, 3).flatMap((job) => {
+    const hash = (job.job_hash || '').slice(0, 16);
+    const row = [
+      { text: 'Apply', callback_data: `accept:${callbackProfile}:${hash}` },
+      { text: 'Skip', callback_data: `reject:${callbackProfile}:${hash}` }
+    ];
+    if (job.job_url || job.applicationUrl) {
+      row.unshift({ text: 'Open', url: job.job_url || job.applicationUrl });
+    }
+    return [row];
+  });
 
   await sendWithRateLimit(config, chatId, { text: msg, parse_mode: 'MarkdownV2', reply_markup: { inline_keyboard: buttons } });
 }
 
-async function sendHelpMessageLegacy(config, chatId) {
-  const text = [
-    '🤖 *JobPilot Bot — Commands*',
-    '',
-    '/reviews — Show pending reviewed jobs',
-    '/status — Show bot stats for this profile',
-    '/approve\\_all — Approve all jobs with score ≥ 80',
-    '/approve\\_top — Approve the highest\\-scored job',
-    '/approve\\_score 75 — Approve all jobs ≥ a custom score',
-    '/help — Show this message',
-    '',
-    '*Button Actions:*',
-    '✅ Apply — Queue job for auto\\-application',
-    '❌ Skip — Permanently skip this job',
-    '📄 Full Description — See full job details'
-  ].join('\n');
-
-  await sendTelegramMessage(config, chatId, text);
-}
+export { sendPendingReviews };
 
 async function sendHelpMessage(config, chatId, allConfigs = config) {
   const profiles = normalizeConfigList(allConfigs, config)
@@ -548,12 +682,17 @@ async function sendHelpMessage(config, chatId, allConfigs = config) {
     '/status - show stats for this profile',
     '/status all - show stats for every linked profile',
     '/sites - show enabled sites and last scraper result',
+    '/pause - pause scheduled runs',
+    '/resume - resume scheduled runs',
+    '/run - run the scheduler now',
+    '/apply_pending - flush Telegram-approved applications now',
     '/approve\\_all - approve reviewed jobs with score >= 80',
     '/approve\\_top - approve the highest-scored reviewed job',
     '/approve\\_score 75 - approve jobs >= a custom score',
     '/help - show this message',
     '',
     profiles ? `Profiles: ${escapeMarkdown(profiles)}` : '',
+    `Scheduler: ${isPaused() ? 'paused' : 'active'}${hasRunner() ? '' : ' \\(manual run unavailable\\)'}`,
     'Tip: add a profile name, like `/reviews tolu` or `/approve\\_all sister`.'
   ].filter(Boolean).join('\n');
 
@@ -640,23 +779,66 @@ export async function sendDailySummary(config) {
   } catch { /* skip */ }
 
   const profileName = profileLabel(config);
+  const callbackProfile = profileCallbackKey(config);
   const today = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
   const text = [
-    `☀️ *Daily Summary* \\[${escapeMarkdown(profileName)}\\] — ${escapeMarkdown(today)}`,
+    `☀️ *Daily Summary* \[${escapeMarkdown(profileName)}\] — ${escapeMarkdown(today)}`,
     '',
     `📊 Last 24h: ${stats.total} jobs processed`,
     `✅ Applied: ${stats.applied}`,
     `🟡 Pending review: ${stats.reviewed}`,
     `❌ Failed: ${stats.failed}`,
     '',
-    stats.reviewed > 0 ? `_Use /approve\\_all to bulk\\-approve pending jobs_` : '_All clear\\! No jobs awaiting review_'
+    stats.reviewed > 0 ? '_Tap a button below or use /approve\_all_' : '_All clear\! No jobs awaiting review_'
   ].join('\n');
 
-  await sendWithRateLimit(config, recipient.telegram_chat_id, { text, parse_mode: 'MarkdownV2' });
+  const replyMarkup = stats.reviewed > 0
+    ? {
+        inline_keyboard: [
+          [
+            { text: '✅ Approve all pending', callback_data: `approve_all:${callbackProfile}:80` },
+            { text: '⭐ Approve top', callback_data: `approve_top:${callbackProfile}:noop` }
+          ]
+        ]
+      }
+    : undefined;
+
+  await sendWithRateLimit(config, recipient.telegram_chat_id, {
+    text,
+    parse_mode: 'MarkdownV2',
+    reply_markup: replyMarkup
+  });
 }
 
 async function sendTelegramMessage(config, chatId, text) {
   await sendWithRateLimit(config, chatId, { text, parse_mode: 'MarkdownV2', disable_web_page_preview: true });
+}
+
+async function runNowFromTelegram(config, chatId) {
+  if (!hasRunner()) {
+    await sendTelegramMessage(config, chatId, 'Manual run is not available in this process\\.');
+    return;
+  }
+
+  await sendTelegramMessage(config, chatId, `Starting a manual run for *${escapeMarkdown(profileLabel(config))}*\\.\\.\\.`);
+  const result = await requestRun({ force: true });
+
+  if (!result.ok && result.reason === 'busy') {
+    await sendTelegramMessage(config, chatId, 'A run is already active\\. I will not start another one\\.');
+    return;
+  }
+
+  if (!result.ok) {
+    await sendTelegramMessage(config, chatId, `Manual run could not start: ${escapeMarkdown(result.reason || 'unknown')}\\.`);
+    return;
+  }
+
+  if (result.result?.skipped) {
+    await sendTelegramMessage(config, chatId, `Manual run skipped: ${escapeMarkdown(result.result.reason || 'busy')}\\.`);
+    return;
+  }
+
+  await sendTelegramMessage(config, chatId, `Manual run finished for *${escapeMarkdown(profileLabel(config))}*\\. Use /status for counts\\.`);
 }
 
 async function answerCallback(config, callbackQueryId, text) {
@@ -679,13 +861,112 @@ async function editMessageButtons(config, chatId, messageId, statusText) {
   }).catch(() => {});
 }
 
-async function findJobByHash(config, jobHash) {
+export async function findJobByHash(config, jobHash, allConfigs = []) {
+  const query = String(jobHash || '').trim();
+  if (!query) return null;
+
   try {
     const store = await loadJobStore(config);
-    return store.jobs?.find((j) => j.job_hash === jobHash || j.job_hash?.startsWith(jobHash)) || null;
+    const record = findMatchingJobRecord(store.jobs || [], query);
+    if (record) return normalizeStoredJob(record);
   } catch {
-    return null;
+    // Fall through to the review queue; Telegram buttons may have been sent
+    // before the processed store was written or after it was reset.
   }
+
+  try {
+    const raw = await fs.readFile(config.reviewPath || path.resolve(process.cwd(), 'review', 'jobs.json'), 'utf8');
+    const queue = JSON.parse(raw);
+    const reviewRecord = findMatchingReviewRecord(Array.isArray(queue) ? queue : [], query, config);
+    if (reviewRecord) return normalizeReviewJob(reviewRecord);
+  } catch {
+    // Nothing else to search.
+  }
+
+  // Telegram buttons can outlive a profile-store reset. Search the durable
+  // global store and the other active profile stores before declaring a stale
+  // callback unusable.
+  const stores = [];
+  try {
+    const globalStore = await loadGlobalJobStore(config);
+    stores.push(globalStore);
+  } catch { /* ignore unavailable global store */ }
+  for (const profileConfig of normalizeConfigList(allConfigs, config)) {
+    if (profileConfig === config) continue;
+    try {
+      stores.push(await loadJobStore(profileConfig));
+    } catch { /* ignore unavailable profile store */ }
+  }
+  for (const store of stores) {
+    const record = findMatchingJobRecord(store.jobs || [], query);
+    if (record) return normalizeStoredJob(record);
+  }
+
+  return null;
+}
+
+function findMatchingJobRecord(records, query) {
+  const normalizedQuery = normalizeHashPrefix(query);
+  if (!normalizedQuery) return null;
+
+  return records.find((record) => {
+    const hash = normalizeHashPrefix(record.job_hash || hashJob(record));
+    return hash === normalizedQuery || hash.startsWith(normalizedQuery);
+  }) || null;
+}
+
+function findMatchingReviewRecord(records, query, config = {}) {
+  const normalizedQuery = normalizeHashPrefix(query);
+  if (!normalizedQuery) return null;
+  const profileName = String(config.profileName || '').toLowerCase();
+
+  return records.find((record) => {
+    if (profileName && String(record.profile || '').toLowerCase() !== profileName) return false;
+    const nestedJob = record.job || {};
+    const candidates = [
+      record.job_hash,
+      nestedJob.job_hash,
+      hashJob(nestedJob),
+      hashJob({
+        ...nestedJob,
+        applicationUrl: record.applicationUrl || nestedJob.applicationUrl || nestedJob.job_url
+      })
+    ].map(normalizeHashPrefix).filter(Boolean);
+
+    return candidates.some((hash) => hash === normalizedQuery || hash.startsWith(normalizedQuery));
+  }) || null;
+}
+
+function normalizeStoredJob(record = {}) {
+  return {
+    ...record,
+    applicationUrl: record.applicationUrl || record.job_url || record.url || ''
+  };
+}
+
+function normalizeReviewJob(record = {}) {
+  const job = record.job || {};
+  return {
+    ...job,
+    ...record,
+    job,
+    job_hash: record.job_hash || job.job_hash || hashJob(job),
+    source_site: record.source_site || record.source || job.source_site || job.source || 'unknown',
+    job_url: record.job_url || record.applicationUrl || job.job_url || job.applicationUrl || '',
+    applicationUrl: record.applicationUrl || record.job_url || job.applicationUrl || job.job_url || '',
+    title: record.title || job.title,
+    company: record.company || job.company || '',
+    score: record.score ?? record.analysis?.score ?? job.score,
+    local: record.local || record.analysis?.local,
+    gemini: record.gemini || record.analysis?.gemini,
+    optimizer: record.optimizer || record.analysis?.optimizer,
+    cover_letter: record.cover_letter || record.generatedCoverLetter || record.analysis?.cover_letter,
+    application_answers: record.application_answers || record.analysis?.application_answers
+  };
+}
+
+function normalizeHashPrefix(value) {
+  return String(value || '').trim().toLowerCase().replace(/[^a-f0-9]/g, '');
 }
 
 function findProfileConfig(profileName, allConfigs) {
@@ -705,4 +986,57 @@ function sleep(ms) {
 
 export function stopTelegramPolling() {
   pollingActive = false;
+}
+
+export async function sendOutcomeNotification(job, outcome, message, config = {}) {
+  const recipient = resolveTelegramRecipient(config, { job });
+  if (!config?.telegramBotToken || !recipient.telegram_chat_id) return;
+
+  const emoji = outcome === 'interview_requested'
+    ? '🎉'
+    : outcome === 'rejected'
+      ? '❌'
+      : 'ℹ️';
+  const title = outcome === 'interview_requested'
+    ? 'Interview requested'
+    : outcome === 'rejected'
+      ? 'Application rejected'
+      : String(outcome || 'Update');
+  const jobLine = [job?.title, job?.company ? `@ ${job.company}` : ''].filter(Boolean).join(' ');
+  const safeJobLine = escapeHtml(jobLine);
+  const safeMessage = escapeHtml(message || '');
+  const text = `<b>${escapeHtml(title)}</b>\n${safeJobLine ? `${safeJobLine}\n` : ''}${safeMessage}`;
+
+  await sleep(350);
+  const url = `https://api.telegram.org/bot${config.telegramBotToken}/sendMessage`;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          chat_id: recipient.telegram_chat_id,
+          text,
+          parse_mode: 'HTML',
+          disable_web_page_preview: true
+        })
+      });
+      if (response.status === 429) {
+        const data = await response.json().catch(() => ({}));
+        await sleep(((data.parameters?.retry_after || 10) + 1) * 1000);
+        continue;
+      }
+      return response;
+    } catch (error) {
+      await appendLog(`Telegram outcome notification error: ${error.message}`, config);
+    }
+  }
+}
+
+function escapeHtml(value) {
+  return String(value || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
 }

@@ -1,70 +1,100 @@
-'use client'
+'use client';
 
-import { useEffect, useState } from 'react'
-import { createClient } from '@/utils/supabase/client'
-import { motion } from 'framer-motion'
+import { useEffect, useState } from 'react';
+import { createClient } from '@/utils/supabase/client';
+import { motion } from 'framer-motion';
+
+const STATES = {
+  WAITING: { tone: 'amber', label: 'waiting', message: 'Handing your session back to the CLI loopback…' },
+  OK:      { tone: 'green', label: 'linked',  message: 'CLI is linked. You can close this tab.' },
+  ERROR:   { tone: 'red',   label: 'failed',  message: 'Could not reach the CLI. Is the terminal process still running?' },
+  NO_PORT: { tone: 'red',   label: 'failed',  message: 'Missing CLI port. Run `jobpilot login` again from your terminal.' },
+  NO_SESSION: { tone: 'red', label: 'failed', message: 'No active session. Sign in first.' },
+};
 
 export default function CliAuthPage() {
-  const [status, setStatus] = useState('Authenticating CLI...')
-  
+  const [state, setState] = useState(STATES.WAITING);
+  const [meta, setMeta]   = useState({ port: null, email: null });
+
   useEffect(() => {
-    const runHandshake = async () => {
-      const params = new URLSearchParams(window.location.search)
-      const port = params.get('port')
+    const run = async () => {
+      const params = new URLSearchParams(window.location.search);
+      const port = params.get('port');
+      if (!port) { setState(STATES.NO_PORT); return; }
 
-      if (!port) {
-        setStatus('Error: Missing CLI port parameter.')
-        return
-      }
+      const supabase = createClient();
+      const { data: { session }, error } = await supabase.auth.getSession();
+      if (error || !session) { setState(STATES.NO_SESSION); return; }
 
-      const supabase = createClient()
-      const { data: { session }, error } = await supabase.auth.getSession()
-
-      if (error || !session) {
-        setStatus('Error: No active session found. Please log in first.')
-        return
-      }
-
-      // We have the session. Pass the access_token and refresh_token to the CLI's local server.
-      const { access_token, refresh_token, user } = session
+      const { access_token, refresh_token, user } = session;
+      setMeta({ port, email: user.email });
 
       try {
-        const response = await fetch(`http://localhost:${port}/callback?token=${access_token}&refresh_token=${refresh_token}&email=${encodeURIComponent(user.email)}`)
-        if (response.ok) {
-          setStatus('Authentication successful! You can close this tab and return to your terminal.')
-        } else {
-          setStatus('Error: Could not reach the CLI local server. Is it still running?')
-        }
-      } catch (err) {
-        setStatus('Error: Could not connect to localhost CLI. Is the terminal process running?')
+        const url = `http://localhost:${port}/callback?token=${access_token}&refresh_token=${refresh_token}&email=${encodeURIComponent(user.email)}`;
+        const res = await fetch(url);
+        setState(res.ok ? STATES.OK : STATES.ERROR);
+      } catch {
+        setState(STATES.ERROR);
       }
-    }
+    };
+    run();
+  }, []);
 
-    runHandshake()
-  }, [])
+  const color = state.tone === 'green' ? 'var(--green)' : state.tone === 'red' ? 'var(--red)' : 'var(--amber)';
 
   return (
-    <div style={{ minHeight: '80vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px' }}>
-      <motion.div 
-        initial={{ opacity: 0, scale: 0.95 }}
-        animate={{ opacity: 1, scale: 1 }}
-        className="glass-card"
-        style={{ padding: '60px 40px', width: '100%', maxWidth: '500px', textAlign: 'center' }}
+    <div style={{ minHeight: 'calc(100vh - 64px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
+      <motion.div
+        initial={{ opacity: 0, y: 14 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.35 }}
+        className="panel"
+        style={{ width: '100%', maxWidth: 540, padding: '36px 32px', display: 'grid', gap: 22 }}
       >
-        <h1 className="heading-md" style={{ marginBottom: '24px' }}>CLI Authentication</h1>
-        
-        <div style={{ 
-          padding: '24px', 
-          background: status.includes('successful') ? 'rgba(16, 185, 129, 0.1)' : status.includes('Error') ? 'rgba(239, 68, 68, 0.1)' : 'rgba(255,255,255,0.05)', 
-          border: '1px solid',
-          borderColor: status.includes('successful') ? 'rgba(16, 185, 129, 0.3)' : status.includes('Error') ? 'rgba(239, 68, 68, 0.3)' : 'rgba(255,255,255,0.1)',
-          borderRadius: '12px',
-          color: status.includes('successful') ? 'var(--green)' : status.includes('Error') ? '#ef4444' : 'var(--text-main)',
-          fontSize: '1.1rem'
-        }}>
-          {status}
+        <div>
+          <div className="kicker" style={{ marginBottom: 8 }}>cli handshake</div>
+          <h1 className="heading-md">Linking JobPilot CLI</h1>
         </div>
+
+        <div style={{
+          border: `1px solid ${color}`,
+          borderRadius: 4,
+          padding: '20px 22px',
+          display: 'grid',
+          gap: 10,
+          background: state.tone === 'green' ? 'var(--green-soft)' : state.tone === 'red' ? 'var(--red-soft)' : 'var(--amber-glow)',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <span style={{
+              width: 10, height: 10, borderRadius: '50%', background: color,
+              boxShadow: state.tone === 'amber' ? `0 0 12px ${color}` : 'none',
+              animation: state.tone === 'amber' ? 'blink 1s steps(1) infinite' : 'none',
+            }} />
+            <span style={{ fontFamily: 'IBM Plex Mono, monospace', fontSize: '0.78rem', textTransform: 'lowercase', letterSpacing: '0.04em', color }}>
+              [{state.label}]
+            </span>
+          </div>
+          <p style={{ color: 'var(--paper)', fontSize: '1rem', lineHeight: 1.55 }}>
+            {state.message}
+          </p>
+        </div>
+
+        <hr className="rule" />
+
+        <div style={{ display: 'grid', gap: 8 }}>
+          <div className="kicker">handshake details</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '110px 1fr', gap: '8px 14px', fontFamily: 'IBM Plex Mono, monospace', fontSize: '0.86rem' }}>
+            <span className="dim">target</span>     <span style={{ color: 'var(--paper-soft)' }}>http://localhost:{meta.port || '—'}</span>
+            <span className="dim">scope</span>      <span style={{ color: 'var(--paper-soft)' }}>dashboard.sync (read+write metadata)</span>
+            <span className="dim">account</span>    <span style={{ color: 'var(--paper-soft)' }}>{meta.email || '—'}</span>
+            <span className="dim">transport</span>  <span style={{ color: 'var(--paper-soft)' }}>loopback only · 127.0.0.1</span>
+          </div>
+        </div>
+
+        <p className="dim" style={{ fontSize: '0.82rem', lineHeight: 1.6 }}>
+          Revoke any time with <code className="inline-code">jobpilot logout</code> or from <code className="inline-code">/dashboard/settings</code>. The CLI never receives a password — only this short-lived session token.
+        </p>
       </motion.div>
     </div>
-  )
+  );
 }

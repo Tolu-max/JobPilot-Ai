@@ -167,6 +167,8 @@ async function attemptCapSolverOnce(page, captchaType, apiKey, config) {
     const task = { type: taskType, websiteURL: pageUrl, websiteKey: siteKey };
     if (isInvisible) task.isInvisible = true;
 
+
+
     const { response: createRes, data: createData } = await postSolverJson(
       `${CAPSOLVER_BASE}/createTask`,
       { clientKey: apiKey, task },
@@ -395,29 +397,38 @@ async function injectCaptchaToken(page, token, captchaType) {
       }
     }
 
-    // 2. Try to find and call the reCAPTCHA callback
+    // 2. Try to find and call the reCAPTCHA callback.
+    // Use a seen-Set to prevent infinite loops from circular references in grecaptcha internals.
     let callbackCalled = false;
     if (window.___grecaptcha_cfg) {
       try {
         const clients = window.___grecaptcha_cfg.clients || {};
+        const seen = new Set();
+        let done = false;
         for (const clientId of Object.keys(clients)) {
+          if (done) break;
           const client = clients[clientId];
-          // Traverse the client object to find callback functions
           const queue = [client];
-          while (queue.length > 0) {
+          while (queue.length > 0 && !done) {
             const node = queue.shift();
-            if (node && typeof node === 'object') {
-              // Check if this node has a callback
-              if (typeof node.callback === 'function') {
-                try {
-                  node.callback(token);
-                  callbackCalled = true;
-                  console.log('[CaptchaSolver] Callback called successfully');
-                } catch (e) {
-                  console.log('[CaptchaSolver] Callback error:', e);
-                }
+            if (!node || typeof node !== 'object' || seen.has(node)) continue;
+            seen.add(node);
+            if (seen.size > 5000) {
+              console.log('[CaptchaSolver] Traversal limit reached, stopping');
+              done = true;
+              break;
+            }
+            if (typeof node.callback === 'function') {
+              try {
+                node.callback(token);
+                callbackCalled = true;
+                done = true;
+                console.log('[CaptchaSolver] Callback called successfully');
+              } catch (e) {
+                console.log('[CaptchaSolver] Callback error:', e);
               }
-              // Add child objects to queue
+            }
+            if (!done) {
               for (const key of Object.keys(node)) {
                 const val = node[key];
                 if (val && typeof val === 'object' && !Array.isArray(val)) {
@@ -474,6 +485,14 @@ async function injectCaptchaToken(page, token, captchaType) {
 // ---------------------------------------------------------------------------
 
 async function detectCaptchaType(page) {
+  // hCaptcha must be checked before the generic [data-sitekey] selector because
+  // hCaptcha widgets also carry data-sitekey, and misclassifying them as
+  // reCAPTCHA v2 sends a 36-char hCaptcha key to a 40-char reCAPTCHA validator.
+  const hcaptchaLocator = page.locator('iframe[src*="hcaptcha"], .h-captcha');
+  await hcaptchaLocator.first().waitFor({ timeout: 8000, state: 'attached' }).catch(() => {});
+  const hasHcaptcha = (await hcaptchaLocator.count().catch(() => 0)) > 0;
+  if (hasHcaptcha) return 'hcaptcha';
+
   const anchorLocator = page.locator(
     'iframe[src*="recaptcha/api2/anchor"], iframe[src*="recaptcha/enterprise/anchor"]'
   );
@@ -483,11 +502,6 @@ async function detectCaptchaType(page) {
   const hasRecaptchaEl = (await page.locator('.g-recaptcha, [data-sitekey]').count().catch(() => 0)) > 0;
   const hasRecaptchaScript = (await page.locator('script[src*="recaptcha"]').count().catch(() => 0)) > 0;
   if (hasAnchorIframe || hasRecaptchaEl || hasRecaptchaScript) return 'recaptcha2';
-
-  const hcaptchaLocator = page.locator('iframe[src*="hcaptcha"], .h-captcha');
-  await hcaptchaLocator.first().waitFor({ timeout: 3000, state: 'attached' }).catch(() => {});
-  const hasHcaptcha = (await hcaptchaLocator.count().catch(() => 0)) > 0;
-  if (hasHcaptcha) return 'hcaptcha';
 
   return 'unknown';
 }

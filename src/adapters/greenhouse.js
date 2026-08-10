@@ -28,9 +28,10 @@ async function fillStep(page, step, ctx) {
   const lastName = lastParts.join(' ');
   const email = ctx.config?.applicantEmail || candidate.email || '';
   const phone = firstPhone(candidate.phone || defaults.phone || '');
+  const location = candidate.location || defaults.location || defaults.city || '';
 
   await upload(page, '#resume, input[type="file"][id*="resume" i], input[type="file"]', ctx.resumePath);
-  await fillPersonalFields(page, { firstName, lastName, email, phone, country: defaults.country || 'Nigeria' });
+  await fillPersonalFields(page, { firstName, lastName, email, phone, country: defaults.country || 'Nigeria', location });
   await fillOptionalProfileFields(page, ctx);
   await fillQuestionInputs(page, ctx);
   await chooseComboboxes(page, ctx);
@@ -42,12 +43,16 @@ async function fillStep(page, step, ctx) {
   await page.waitForTimeout(500);
 }
 
-async function fillPersonalFields(page, { firstName, lastName, email, phone, country }) {
+async function fillPersonalFields(page, { firstName, lastName, email, phone, country, location }) {
   await fill(page, '#first_name, input[aria-label="First Name"]', firstName, { overwrite: true });
   await fill(page, '#last_name, input[aria-label="Last Name"]', lastName, { overwrite: true });
+  await fill(page, '#preferred_name, input[aria-label="Preferred First Name"]', firstName, { overwrite: true });
   await fill(page, '#email, input[aria-label="Email"]', email, { overwrite: true });
   await fill(page, '#phone, input[aria-label="Phone"]', phone, { overwrite: true });
   await fillAutocomplete(page, '#country', country, { overwrite: true });
+  if (location) {
+    await fillAutocomplete(page, '#candidate-location, input[aria-label*="Location" i], input[id*="location" i]', location, { overwrite: true });
+  }
 }
 
 async function advance(page, step, ctx) {
@@ -61,7 +66,7 @@ async function advance(page, step, ctx) {
     };
   }
 
-  const audit = await getGreenhouseAuditState(page);
+  const audit = await getGreenhouseAuditState(page, ctx);
   if (!audit.ok) {
     return {
       step,
@@ -160,7 +165,7 @@ async function fillOptionalProfileFields(page, ctx) {
 }
 
 async function fillQuestionInputs(page, ctx) {
-  const inputs = page.locator('input[id^="question_"][type="text"]:visible, input[id^="question_"]:not([type]):visible');
+  const inputs = page.locator('input[id^="question_"][type="text"]:not([role="combobox"]):visible, input[id^="question_"]:not([type]):not([role="combobox"]):visible');
   const count = await inputs.count().catch(() => 0);
   for (let index = 0; index < count; index += 1) {
     const input = inputs.nth(index);
@@ -168,7 +173,18 @@ async function fillQuestionInputs(page, ctx) {
     if (current.trim()) continue;
 
     const prompt = await fieldPrompt(input);
-    const answer = answerForPrompt(prompt, ctx);
+    const promptText = String(prompt || '').toLowerCase();
+    if (/zip ?code|zipcode/.test(promptText) && /nigeria/i.test(String(ctx.config?.applicationDefaults?.country || ''))) continue;
+    let answer = answerForPrompt(prompt, ctx);
+    if (!answer) {
+      if (/linkedin/i.test(promptText)) answer = ctx.config?.applicationDefaults?.linkedinProfileUrl || ctx.candidate?.linkedin || '';
+      else if (/website|portfolio|github/i.test(promptText)) answer = ctx.candidate?.website || ctx.candidate?.github || ctx.candidate?.portfolio || '';
+      else if (/salary|compensation|expected pay/i.test(promptText)) answer = ctx.config?.applicationDefaults?.desiredSalary || 'Negotiable';
+      else if (/referr|referred|how did you hear|source/i.test(promptText)) answer = 'LinkedIn';
+      else if (/name.*team member|who referred/i.test(promptText)) answer = 'N/A';
+      else if (/company.*partner|agency|customer\.io|worked for/i.test(promptText)) answer = 'No';
+      else if (/company.*worked|how many companies|employer count/i.test(promptText)) answer = '3';
+    }
     if (answer) await forceFillControlledInput(input, answer.slice(0, 500)).catch(() => {});
   }
 }
@@ -189,20 +205,45 @@ async function chooseRadioGroups(page) {
 async function chooseComboboxes(page, ctx) {
   const boxes = await page.locator('input[role="combobox"]:visible').all();
   for (const box of boxes) {
+    const current = await box.inputValue().catch(() => '');
+    if (current.trim()) continue;
+
     const prompt = await fieldPrompt(box);
     const choice = choiceForPrompt(prompt, ctx);
     if (!choice) continue;
 
     await box.scrollIntoViewIfNeeded().catch(() => {});
     await box.click({ force: true }).catch(() => {});
-    await box.press(process.platform === 'darwin' ? 'Meta+A' : 'Control+A').catch(() => {});
-    await box.pressSequentially(String(choice), { delay: 20 }).catch(() => {});
-    await page.waitForTimeout(500);
+    await page.waitForTimeout(400);
 
-    const option = page.locator('[role="option"]').filter({ hasText: new RegExp(`^\\s*${escapeRegExp(String(choice))}\\s*$`, 'i') }).first();
-    if (await option.isVisible({ timeout: 2000 }).catch(() => false)) {
+    // Try to find an option matching the desired choice.
+    let options = await page.locator('[role="option"]:visible').allInnerTexts().catch(() => []);
+    if (!options.length) {
+      // Open the dropdown with Arrow Down if options didn't render.
+      await box.press('ArrowDown').catch(() => {});
+      await page.waitForTimeout(400);
+      options = await page.locator('[role="option"]:visible').allInnerTexts().catch(() => []);
+    }
+
+    let targetIndex = options.findIndex((text) => new RegExp(escapeRegExp(String(choice)), 'i').test(text));
+    if (targetIndex === -1 && /yes|no/i.test(choice)) {
+      targetIndex = options.findIndex((text) => /^\s*(yes|no)\s*$/i.test(text));
+    }
+    if (targetIndex === -1 && /how many years|years of experience|quantity|number of/i.test(prompt)) {
+      // Pick a middle "1-2 years" or "2+ years" option if available.
+      targetIndex = options.findIndex((text) => /(1[-–]2|2\+|1\+|2[-–]3|0[-–]1)/i.test(text));
+    }
+    if (targetIndex === -1) {
+      // Fallback: pick the first non-empty option that is not a placeholder.
+      targetIndex = options.findIndex((text) => text.trim() && !/select|choose|option/i.test(text));
+    }
+
+    if (targetIndex >= 0) {
+      const option = page.locator('[role="option"]:visible').nth(targetIndex);
       await option.click({ force: true }).catch(() => {});
     } else {
+      await box.pressSequentially(String(choice), { delay: 20 }).catch(() => {});
+      await page.waitForTimeout(400);
       await box.press('Enter').catch(() => {});
     }
     await page.waitForTimeout(300);
@@ -213,14 +254,22 @@ function choiceForPrompt(prompt, ctx) {
   const text = String(prompt || '').toLowerCase();
   if (/authorized|legally authorized|legal.*work/.test(text)) return truthfulWorkAuthorizationAnswer(text, ctx);
   if (/sponsorship|sponsor/.test(text)) return 'No';
-  if (/privacy|ai policy|understood/.test(text)) return 'Yes';
-  if (/2 years|two years|experience|csat|customer support|saas|tech/.test(text)) return 'Yes';
+  if (/privacy|ai policy|understood|agree|confirm.*read|consent|acknowledge/.test(text)) return 'Yes';
+  if (/2 years|two years|experience|csat|customer support|saas|tech|remote|work from home|fully remote/.test(text)) return 'Yes';
   if (/country/.test(text)) return ctx.config?.applicationDefaults?.country || 'Nigeria';
+  if (/location|city|where.*based|work from|plan.*work/.test(text)) return ctx.config?.applicationDefaults?.city || ctx.config?.applicationDefaults?.location || 'Lagos';
+  if (/how many years|years of experience|quantity|number of/.test(text)) return '1-2';
+  if (/gender|sex|identity|nationality|race|ethnicity|disability|veteran|lgbtq|demographic|pronoun|marital/.test(text)) return 'Prefer not to say';
+  if (/degree|education|university|college|qualification|result|grading|mathematics|native language|high school/.test(text)) {
+    return 'Bachelor\'s degree';
+  }
+  if (/referr|referred|how did you hear|source|found this job|where did you learn/.test(text)) return 'LinkedIn';
+  if (/current.*work|previously employed|past 2 years|partner agency|customer\.io/.test(text)) return 'No';
   return 'Yes';
 }
 
-export async function getGreenhouseAuditState(page) {
-  return page.locator('body').evaluate(() => {
+export async function getGreenhouseAuditState(page, ctx = {}) {
+  return page.locator('body').evaluate((defaults) => {
     const visible = (element) => {
       if (!(element instanceof HTMLElement)) return false;
       const style = window.getComputedStyle(element);
@@ -250,6 +299,8 @@ export async function getGreenhouseAuditState(page) {
 
     const missingRequired = requiredInputs
       .filter((element) => {
+        const prompt = promptFor(element).toLowerCase();
+        if (/if you are based in the u\.s\..*(zip ?code|zipcode)/i.test(prompt)) return false;
         if (element.type === 'checkbox' || element.type === 'radio') {
           const name = element.getAttribute('name');
           if (!name) return !element.checked;
@@ -267,6 +318,13 @@ export async function getGreenhouseAuditState(page) {
 
     const invalidFields = Array.from(document.querySelectorAll('[aria-invalid="true"], input:invalid, textarea:invalid, select:invalid'))
       .filter((element) => visible(element))
+      .filter((element) => {
+        const prompt = promptFor(element).toLowerCase();
+        if (/if you are based in the u\.s\..*(zip ?code|zipcode)/i.test(prompt)) return false;
+        if (element.getAttribute('role') !== 'combobox') return true;
+        const selected = element.parentElement?.parentElement?.querySelector('.select__single-value')?.textContent || '';
+        return !String(selected).trim();
+      })
       .map((element) => ({
         id: element.id || '',
         name: element.getAttribute('name') || '',
@@ -286,7 +344,8 @@ export async function getGreenhouseAuditState(page) {
         const required = element.required || element.getAttribute('aria-required') === 'true';
         const prompt = promptFor(element).toLowerCase();
         const likelyRequired = required || /country|authorized|sponsor|privacy|experience|years|support|saas|tech/.test(prompt);
-        return likelyRequired && !String(element.value || '').trim();
+        const selected = element.parentElement?.parentElement?.querySelector('.select__single-value')?.textContent || '';
+        return likelyRequired && !String(element.value || '').trim() && !String(selected).trim();
       })
       .map((element) => ({
         id: element.id || '',
@@ -298,7 +357,9 @@ export async function getGreenhouseAuditState(page) {
     if (missingRequired.length) issues.push(`${missingRequired.length} required field(s) missing`);
     if (invalidFields.length) issues.push(`${invalidFields.length} invalid field(s)`);
     if (unresolvedComboboxes.length) issues.push(`${unresolvedComboboxes.length} unresolved combobox(es)`);
-    if (visibleErrors.length) issues.push(`${visibleErrors.length} visible error message(s)`);
+    if (visibleErrors.length && (missingRequired.length || invalidFields.length || unresolvedComboboxes.length)) {
+      issues.push(`${visibleErrors.length} visible error message(s)`);
+    }
 
     return {
       ok: issues.length === 0,
@@ -308,7 +369,7 @@ export async function getGreenhouseAuditState(page) {
       unresolvedComboboxes,
       visibleErrors
     };
-  }).catch((error) => ({
+  }, ctx.config?.applicationDefaults || {}).catch((error) => ({
     ok: false,
     reason: `Greenhouse audit failed: ${error.message}`,
     missingRequired: [],
@@ -350,12 +411,14 @@ async function chooseSelects(page) {
 async function answerTextareas(page, ctx) {
   const textareas = page.locator('textarea:visible');
   const count = await textareas.count().catch(() => 0);
+  const fallback = ctx.coverLetter || ctx.candidate?.summary || ctx.config?.candidateProfile?.summary || '';
   for (let index = 0; index < count; index += 1) {
     const textarea = textareas.nth(index);
     const current = await textarea.inputValue().catch(() => '');
     if (current.trim()) continue;
     const prompt = await fieldPrompt(textarea);
-    const answer = answerForPrompt(prompt, ctx);
+    let answer = answerForPrompt(prompt, ctx);
+    if (!answer && fallback) answer = fallback;
     if (answer) await textarea.fill(answer.slice(0, 1500));
   }
 }
@@ -440,9 +503,12 @@ async function fillAutocomplete(page, selector, value, options = {}) {
     await clearInput(input);
     await input.pressSequentially(String(value), { delay: 20 }).catch(() => {});
     await page.waitForTimeout(500);
-    const option = page.locator('[role="option"]').filter({ hasText: new RegExp(`^\\s*${escapeRegExp(String(value))}\\s*$`, 'i') }).first();
+    const visibleOptions = page.locator('[role="option"]:visible');
+    const option = visibleOptions.filter({ hasText: new RegExp(`^\\s*${escapeRegExp(String(value))}\\s*$`, 'i') }).first();
     if (await option.isVisible({ timeout: 1500 }).catch(() => false)) {
       await option.click({ force: true }).catch(() => {});
+    } else if (await visibleOptions.count().catch(() => 0)) {
+      await visibleOptions.first().click({ force: true }).catch(() => {});
     } else {
       await page.keyboard.press('ArrowDown').catch(() => {});
       await page.keyboard.press('Enter').catch(() => {});

@@ -19,7 +19,7 @@ test('aiRouter returns mock routed responses without provider calls', async () =
     }
   });
 
-  assert.match(result.modelUsed, /^groq:/);
+  assert.match(result.modelUsed, /^deepseek:/);
   assert.match(result.response, /adjusted_score/);
 });
 
@@ -34,7 +34,7 @@ test('aiRouter mock mode can simulate fallback routing', async () => {
       aiMode: 'MOCK',
       rootDir: dir,
       profileName: 'tolu',
-      aiRouterForcedFailures: ['groq']
+      aiRouterForcedFailures: ['deepseek', 'groq']
     }
   });
 
@@ -59,6 +59,24 @@ test('aiRouter can prefer Groq and disable Gemini', async () => {
   });
 
   assert.match(result.modelUsed, /^groq:/);
+});
+
+test('aiRouter can disable DeepSeek and use the next route', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'ai-router-'));
+  const result = await aiRouter.request({
+    taskType: TaskTypes.FAST_FILTER,
+    prompt: 'Return JSON',
+    profile: { profileName: 'tolu' },
+    jobData: { title: 'SEO Specialist', applicationUrl: 'https://example.com/job', localScore: 82 },
+    config: {
+      aiMode: 'MOCK',
+      rootDir: dir,
+      profileName: 'tolu',
+      aiDisabledProviders: 'deepseek'
+    }
+  });
+
+  assert.match(result.modelUsed, /^(openrouter|groq|gemini):/);
 });
 
 test('aiRouter skips verification AI below local score threshold', async () => {

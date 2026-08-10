@@ -381,7 +381,7 @@ function recommendAction({ applicationScore, atsScore, interviewProbability, ris
     return 'apply';
   }
 
-  if (applicationScore >= 40) {
+  if (applicationScore >= threshold - 15) {
     return 'review';
   }
 

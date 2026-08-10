@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import bruntworkAdapter from '../src/adapters/bruntwork.js';
 import { FormStep } from '../src/adapters/types.js';
 
-test('bruntwork adapter treats enhancement page as submitted proof', async () => {
+test('bruntwork adapter accepts received confirmation on an enhancement page', async () => {
   const page = fakeTextPage(
     "Enhance your application for Administrative & Compliance Coordinator. We've received your application and our team is reviewing your profile."
   );
@@ -12,7 +12,21 @@ test('bruntwork adapter treats enhancement page as submitted proof', async () =>
 
   const submitted = await bruntworkAdapter.isSubmitted(page);
   assert.equal(submitted.submitted, true);
-  assert.equal(submitted.markers.some((marker) => /received your application|enhance your application/i.test(marker)), true);
+});
+
+test('bruntwork adapter does not treat an enhancement heading alone as submitted proof', async () => {
+  const page = fakeTextPage('Enhance your application for Administrative & Compliance Coordinator.');
+  assert.equal(await bruntworkAdapter.getCurrentStep(page), FormStep.DETAILS);
+  assert.equal((await bruntworkAdapter.isSubmitted(page)).submitted, false);
+});
+
+test('bruntwork adapter accepts explicit submitted confirmation', async () => {
+  const page = fakeTextPage(
+    "Thank you for your application. Your application has been submitted."
+  );
+
+  assert.equal(await bruntworkAdapter.getCurrentStep(page), FormStep.SUBMITTED);
+  assert.equal((await bruntworkAdapter.isSubmitted(page)).submitted, true);
 });
 
 function fakeTextPage(bodyText, url = 'https://bruntworkcareers.co/applications/123') {
@@ -31,6 +45,6 @@ function fakeTextPage(bodyText, url = 'https://bruntworkcareers.co/applications/
       },
       isVisible: async () => false
     }),
-    evaluate: async () => 0
+    evaluate: async () => 4
   };
 }

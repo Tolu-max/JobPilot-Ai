@@ -4,6 +4,8 @@ Next.js app for the optional hosted JobPilot dashboard.
 
 The website is not the automation runner. It should only handle auth, review queues, analytics, and safe job metadata synced by the local CLI. Do not collect or store user AI keys, CAPTCHA keys, resumes, browser profiles, cookies, or job-board credentials here.
 
+See `../docs/PRODUCT_MODES.md` for the split between the local CLI, personal self-hosted runner, and hosted dashboard.
+
 ## Local Development
 
 ```bash

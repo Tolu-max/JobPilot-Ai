@@ -6,10 +6,13 @@ builder = "DOCKERFILE"
 dockerfilePath = "Dockerfile"
 
 [deploy]
-# Default mode: always-on scheduler.
-# For lower credit usage, configure Railway cron/scheduled jobs to run:
-#   node scripts/run-all-profiles-once.mjs
-startCommand = "node scripts/run-catchup-then-scheduler.mjs"
+# Default mode: review-first scheduler. The catch-up script can enable live
+# submission for selected sources, so it must be invoked explicitly only after
+# profiles and local approvals have been configured.
+# Railway start commands replace the Docker ENTRYPOINT. Keep dumb-init and the
+# volume bootstrap explicit so Chromium children are reaped and /app/data is
+# linked before the scheduler starts.
+startCommand = "./scripts/railway-entrypoint.sh node scripts/railway-worker.mjs"
 
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 10

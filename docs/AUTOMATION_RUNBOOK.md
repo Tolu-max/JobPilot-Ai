@@ -14,6 +14,13 @@ jobpilot scheduler --profile=<profile>
 
 The hosted dashboard should remain a review and analytics layer. It can approve work, but it should not store secrets or drive the browser itself.
 
+Keep profile assets portable:
+
+- Store resumes inside `profiles/<name>/` when possible.
+- Prefer `resumePath: "resume.pdf"` over an absolute machine path.
+- Run `jobpilot doctor --profile=<profile>` after moving a profile to Railway,
+  Render, Docker, or another computer.
+
 ## 2. Use Review-First as the Default
 
 Every role should pass these gates before live submit:

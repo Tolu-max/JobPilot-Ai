@@ -186,7 +186,7 @@ export default async function SourcesPage({ searchParams }) {
           <h2 className="heading-sm" style={{ marginBottom: 8 }}>Adding another scraper?</h2>
           <p className="muted">Add tests for recency, duplicates, fit filtering, and apply-flow routing before live submit.</p>
         </div>
-        <a href="https://github.com/jobpilot-ai/jobpilot" target="_blank" rel="noreferrer" className="button">
+        <a href="https://github.com/Tolu-max/JobPilot-Ai" target="_blank" rel="noreferrer" className="button">
           Contribution Guide <ExternalLink size={16} />
         </a>
       </section>

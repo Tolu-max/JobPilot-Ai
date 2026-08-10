@@ -16,6 +16,19 @@ const requested = (process.env.PROFILES || process.env.PROFILE || '')
   .filter(Boolean);
 
 const profileNames = requested.length ? requested : await discoverProfiles();
+const reprocessProfiles = new Set(
+  String(process.env.REPROCESS_NON_APPLIED_PROFILES || '')
+    .split(',')
+    .map((name) => name.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, ''))
+    .filter(Boolean)
+);
+const reprocessMarker = path.join(
+  process.env.JOBPILOT_DATA_DIR || (process.env.RAILWAY_ENVIRONMENT ? '/app/data' : path.join(rootDir, 'data')),
+  'maintenance',
+  'reprocess-non-applied-once.json'
+);
+const reprocessMarkerExists = await fileExists(reprocessMarker);
+const reprocessNonApplied = !reprocessMarkerExists && reprocessProfiles.size > 0;
 
 if (!profileNames.length) {
   console.log('No profiles found. Add profiles under /app/data/profiles or set PROFILES.');
@@ -30,7 +43,9 @@ for (const profileName of profileNames) {
 
   try {
     await appendLog('Railway cron pass started.', config);
-    await runJobHunt(config);
+    await runJobHunt(config, {
+      reprocessNonApplied: reprocessNonApplied && reprocessProfiles.has(profileName)
+    });
     await checkEmailResponses(config).catch((err) => appendLog(`ResponseTracker error: ${err.message}`, config));
     await appendLog('Railway cron pass finished.', config);
   } catch (err) {
@@ -38,6 +53,12 @@ for (const profileName of profileNames) {
     await appendLog(`Railway cron pass failed: ${err.stack || err.message}`, config);
     console.error(`Profile ${profileName} failed: ${err.message}`);
   }
+}
+
+if (reprocessNonApplied) {
+  await fs.mkdir(path.dirname(reprocessMarker), { recursive: true });
+  await fs.writeFile(reprocessMarker, `${JSON.stringify({ completedAt: new Date().toISOString(), profiles: [...reprocessProfiles] }, null, 2)}\n`);
+  console.log(`[worker] marked one-time non-applied reprocess complete: ${[...reprocessProfiles].join(',')}`);
 }
 
 if (failures > 0) {
@@ -50,5 +71,14 @@ async function discoverProfiles() {
     return names.filter((name) => !name.startsWith('.') && name !== 'example');
   } catch {
     return [];
+  }
+}
+
+async function fileExists(filePath) {
+  try {
+    await fs.access(filePath);
+    return true;
+  } catch {
+    return false;
   }
 }

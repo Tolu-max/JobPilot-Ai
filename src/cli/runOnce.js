@@ -14,6 +14,7 @@ import { runJobHunt } from '../pipeline.js';
  *   --max-applies=N        cap auto-applies this run (overrides preferences.json)
  *   --sites=a,b            limit enabled sites for this run
  *   --no-apply             alias for --max-applies=0; scrape + score, never apply
+ *   --reprocess-non-applied re-evaluate processed jobs except confirmed applications
  *   --allow-gateway-submit allow source boards to hand off to audited apply adapters
  */
 export async function cmdRun(args = {}) {
@@ -24,6 +25,7 @@ export async function cmdRun(args = {}) {
   // Surface caps as per-profile env overrides so buildConfig picks them up.
   const maxJobs = numericArg(args, ['max-jobs', 'maxJobs']);
   const noApply = args['no-apply'] === true || args.noApply === true;
+  const reprocessNonApplied = args['reprocess-non-applied'] === true || args.reprocessNonApplied === true;
   const allowGatewaySubmit = args['allow-gateway-submit'] === true || args.allowGatewaySubmit === true;
   const maxApplies = noApply ? 0 : numericArg(args, ['max-applies', 'maxApplies']);
   const sites = csvArg(args, ['sites', 'site']);
@@ -59,12 +61,13 @@ export async function cmdRun(args = {}) {
   if (maxApplies !== null) console.log(`  ${pc.dim('max-applies:')}  ${pc.white(maxApplies)}`);
   if (sites) console.log(`  ${pc.dim('sites:')}        ${pc.white(sites)}`);
   if (config.allowGatewayAutoSubmit) console.log(`  ${pc.dim('gateway:')}      ${pc.white('audited handoff enabled')}`);
+  if (reprocessNonApplied) console.log(`  ${pc.dim('reprocess:')}    ${pc.white('non-applied records only')}`);
   console.log();
 
   const start = Date.now();
   try {
-    const results = await runJobHunt(config);
-    const summary = summarizeResults(results);
+    const results = await runJobHunt(config, { reprocessNonApplied });
+    const summary = summarizeResults(results, results.runSummary);
     const took = ((Date.now() - start) / 1000).toFixed(1);
 
     console.log();
@@ -73,6 +76,7 @@ export async function cmdRun(args = {}) {
       ['Scraped', summary.scraped],
       ['Ignored', summary.ignored],
       ['Queued review', summary.queuedReview],
+      ['Apply attempts', summary.autoApplyAttempts],
       ['Auto-applied', summary.autoApplied],
       ['Deduped', summary.deduped],
       ['Errors', summary.errors]
@@ -95,15 +99,17 @@ export async function cmdRun(args = {}) {
   }
 }
 
-function summarizeResults(results) {
+export function summarizeResults(results, runSummary = {}) {
   const rows = Array.isArray(results) ? results : [];
+  const newRows = rows.filter((row) => !row.deduped && row.status !== 'duplicate' && row.decision !== 'duplicate');
   return {
-    scraped: rows.length,
-    ignored: rows.filter((row) => row.decision === 'ignore' || row.status === 'skipped').length,
-    queuedReview: rows.filter((row) => row.status === 'pending' || row.status === 'manual_review').length,
-    autoApplied: rows.filter((row) => row.status === 'applied').length,
-    deduped: rows.filter((row) => row.deduped || row.status === 'duplicate' || row.decision === 'duplicate').length,
-    errors: rows.filter((row) => row.status === 'failed').length
+    scraped: runSummary.jobsScanned ?? rows.length,
+    ignored: runSummary.jobsIgnored ?? newRows.filter((row) => row.decision === 'ignore' || row.status === 'skipped').length,
+    queuedReview: runSummary.jobsQueuedForReview ?? newRows.filter((row) => row.status === 'pending' || row.status === 'manual_review').length,
+    autoApplyAttempts: runSummary.jobsAutoApplyAttempts ?? newRows.filter((row) => row.decision === 'apply').length,
+    autoApplied: runSummary.jobsAutoApplied ?? newRows.filter((row) => row.status === 'applied').length,
+    deduped: runSummary.jobsDeduped ?? rows.filter((row) => row.deduped || row.status === 'duplicate' || row.decision === 'duplicate').length,
+    errors: (runSummary.errors?.length || 0) + (runSummary.processingErrors ?? newRows.filter((row) => row.status === 'failed').length)
   };
 }
 

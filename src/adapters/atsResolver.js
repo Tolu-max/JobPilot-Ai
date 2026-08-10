@@ -89,7 +89,7 @@ const PLATFORM_RULES = [
     adapter: 'bamboohr',
     label: 'BambooHR',
     kind: 'ats',
-    audited: false,
+    audited: true,
     patterns: [/\.bamboohr\.com\/careers/i]
   }
 ];

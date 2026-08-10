@@ -21,12 +21,12 @@ goto end
 
 :stop
 echo Stopping JobPilot AI...
-"%PM2%" stop job-ai-agent
+"%PM2%" stop jobpilot-scheduler
 goto end
 
 :restart
 echo Restarting JobPilot AI...
-"%PM2%" restart job-ai-agent --update-env
+"%PM2%" restart jobpilot-scheduler --update-env
 echo Done.
 goto end
 
@@ -37,7 +37,7 @@ goto end
 :logs
 if /i "%2"=="tolu"   ( powershell -Command "Get-Content '%DIR%\logs\tolu.log' -Tail 30" & goto end )
 if /i "%2"=="sister" ( powershell -Command "Get-Content '%DIR%\logs\sister.log' -Tail 30" & goto end )
-"%PM2%" logs job-ai-agent --lines 30
+"%PM2%" logs jobpilot-scheduler --lines 30
 goto end
 
 :tolu

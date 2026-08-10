@@ -65,6 +65,33 @@ test('skips high-risk jobs with hard filters', () => {
   assert.equal(result.risk_flags.some((flag) => flag.severity === 'high'), true);
 });
 
+test('does not treat executive assistant as executive leadership seniority', () => {
+  const sisterProfile = {
+    name: 'Temiloluwa Ruth Oyelola',
+    skills: ['Administrative Support', 'Virtual Assistance', 'Calendar Management', 'Google Workspace', 'Microsoft Office'],
+    strengths: ['calendar management', 'executive assistant', 'Microsoft Office'],
+    preferredRoles: ['Executive Assistant', 'Virtual Assistant', 'Administrative Assistant'],
+    targetSeniorities: ['entry', 'junior', 'mid']
+  };
+
+  const result = optimizeApplication({
+    job: {
+      title: 'C-suite Executive Assistant',
+      applicationUrl: 'https://bruntworkcareers.co/jobs/57780783907',
+      source: 'bruntwork',
+      description: 'Support the CEO with calendar management, email management, administrative support, client coordination, and Google Workspace.',
+      requirements: 'Executive calendar management, email management, Google Workspace, Microsoft Office, communication.'
+    },
+    candidateProfile: sisterProfile,
+    resumeText: 'Executive assistant with calendar management, administrative support, Google Workspace and Microsoft Office experience.',
+    localAnalysis: { score: 92, reasons: ['Administrative support matched'] },
+    aiAnalysis: { adjusted_score: 90, confidence: 80, should_apply: true }
+  });
+
+  assert.equal(result.risk_flags.some((flag) => flag.code === 'seniority_mismatch'), false);
+  assert.notEqual(result.recommendation, 'skip');
+});
+
 test('writes test-mode optimizer artifacts under profile and job hash', async () => {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'application-optimizer-'));
   const job = {

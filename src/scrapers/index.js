@@ -78,7 +78,10 @@ export async function runScrapers(config) {
 
   for (const site of enabledSites) {
     const entry = scraperRegistry[site];
-    const siteConfig = config.sites?.[site] || {};
+    const siteConfig = {
+      ...(config.sites?.[site] || {}),
+      lastSeenJobUrl: state.sites?.[site]?.lastSeenJobUrl || ''
+    };
 
     if (!entry) {
       const message = `Unknown scraper "${site}" is enabled; skipping.`;
@@ -106,7 +109,12 @@ export async function runScrapers(config) {
         startedAt,
         finishedAt: new Date().toISOString()
       });
-      await updateRunState(config, state, site, { status: 'ok', jobCount: siteJobs.length });
+      await updateRunState(config, state, site, {
+        status: 'ok',
+        jobCount: siteJobs.length,
+        startedAt,
+        latestJobUrl: siteJobs[0]?.applicationUrl || siteJobs[0]?.jobUrl || ''
+      });
       await appendLog(`${site} scraper returned ${siteJobs.length} job(s).`, config);
     } catch (error) {
       const message = `${site} scraper failed: ${error.stack || error.message}`;
@@ -120,7 +128,11 @@ export async function runScrapers(config) {
         finishedAt: new Date().toISOString(),
         error: error.message
       });
-      await updateRunState(config, state, site, { status: 'failed', error: error.message });
+      await updateRunState(config, state, site, {
+        status: 'failed',
+        error: error.message,
+        startedAt
+      });
       await appendLog(message, config);
     }
   }
@@ -170,7 +182,7 @@ async function runSiteScraper(entry, config, site, siteConfig) {
   );
 }
 
-function isCoolingDown(site, siteConfig, state) {
+export function isCoolingDown(site, siteConfig, state) {
   // Manual snooze (set via the Telegram /snooze command) always wins.
   const snoozeUntil = state.sites?.[site]?.snoozeUntil;
   if (snoozeUntil && Date.now() < new Date(snoozeUntil).getTime()) return true;
@@ -178,11 +190,20 @@ function isCoolingDown(site, siteConfig, state) {
   const cooldownMinutes = Number.parseInt(siteConfig.cooldownMinutes, 10);
   if (!Number.isFinite(cooldownMinutes) || cooldownMinutes <= 0) return false;
 
-  const lastRunAt = state.sites?.[site]?.lastRunAt;
-  if (!lastRunAt) return false;
+  // Cooldowns are intervals between scrape starts. Using the completion time
+  // makes a scheduler configured to the same interval skip every other tick
+  // whenever a scrape takes more than a few milliseconds.
+  const lastStartedAt = state.sites?.[site]?.lastStartedAt || state.sites?.[site]?.lastRunAt;
+  if (!lastStartedAt) return false;
 
-  const nextAllowedAt = new Date(lastRunAt).getTime() + cooldownMinutes * 60 * 1000;
-  return Date.now() < nextAllowedAt;
+  const cooldownMs = cooldownMinutes * 60 * 1000;
+  const nextAllowedAt = new Date(lastStartedAt).getTime() + cooldownMs;
+  // Sequential sites/profiles do not start at the exact same millisecond on
+  // every scheduler tick. Allow small runtime jitter so a three-minute
+  // scheduler paired with a three-minute cooldown does not skip work because
+  // the preceding scraper finished a few seconds faster than last time.
+  const graceMs = Math.min(30_000, Math.max(1_000, Math.round(cooldownMs * 0.05)));
+  return Date.now() + graceMs < nextAllowedAt;
 }
 
 async function withTimeout(task, timeoutMs, message) {
@@ -208,14 +229,18 @@ async function loadRunState(config) {
   }
 }
 
-async function updateRunState(config, state, site, result) {
+export async function updateRunState(config, state, site, result) {
   const filePath = runStatePath(config);
+  const finishedAt = new Date().toISOString();
   state.sites ||= {};
+  const previous = state.sites[site] || {};
   state.sites[site] = {
-    ...(state.sites[site] || {}),
-    lastRunAt: new Date().toISOString(),
+    ...previous,
+    lastStartedAt: result.startedAt || finishedAt,
+    lastRunAt: finishedAt,
     lastStatus: result.status,
     lastJobCount: result.jobCount || 0,
+    lastSeenJobUrl: result.latestJobUrl || previous.lastSeenJobUrl || '',
     lastError: result.error || ''
   };
   if (result.status === 'ok') {

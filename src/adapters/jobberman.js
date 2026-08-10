@@ -6,7 +6,8 @@ function matches(url) {
   return /jobberman\.com/i.test(String(url || ''));
 }
 
-const LOGIN_URL = 'https://www.jobberman.com/seeker/login';
+const HOME_URL = 'https://www.jobberman.com';
+const LOGIN_URL = 'https://www.jobberman.com/account/login';
 const LOGIN_WALL = /login to apply|log ?in to (your )?account|sign in to apply|continue with google|continue with linkedin/i;
 const SUBMITTED = /application (sent|submitted|received)|successfully applied|you have applied/i;
 
@@ -20,7 +21,10 @@ async function getCurrentStep(page, ctx = {}) {
   // Jobberman requires an authenticated jobseeker session. If we hit the login
   // wall, log in with the profile's credentials (the persistent browser context
   // keeps the session for future runs) and return to the job before continuing.
-  if (LOGIN_WALL.test(body)) {
+  // The public Jobberman header can show a Login link even on an authenticated
+  // listing/application page. Only treat it as an auth wall when the page
+  // explicitly asks the candidate to log in or the browser is on the login URL.
+  if (LOGIN_WALL.test(body) || /\/account\/login|\/account\/sign-?in/i.test(page.url())) {
     const login = await ensureJobbermanLogin(page, ctx);
     if (!login.ok) return FormStep.ERROR;
     const jobUrl = ctx?.job?.applicationUrl || ctx?.job?.jobUrl;
@@ -32,9 +36,27 @@ async function getCurrentStep(page, ctx = {}) {
   if (SUBMITTED.test(body)) {
     return FormStep.SUBMITTED;
   }
-  if (/apply for .+submit and apply|submit and apply|apply here/i.test(body)) {
+
+  const applicationFormVisible = await hasApplicationFormFields(page);
+  if (applicationFormVisible || /submit and apply/i.test(body)) {
     return FormStep.DETAILS;
   }
+
+  // Job detail page — "Apply here" button or easy-apply button present but form not yet open.
+  // fillStep will click it to reveal the full form.
+  const applyBtnVisible = typeof page.getByRole === 'function'
+    ? await page
+      .getByRole('button', { name: /apply here|easy apply|apply now|apply for/i })
+      .first()
+      .isVisible({ timeout: 1500 })
+      .catch(() => false)
+    : false;
+  if (applyBtnVisible) return FormStep.DETAILS;
+
+  // Also catch the case where we're on a Jobberman job URL and not on login/error page.
+  const onJobUrl = /jobberman\.com\/(jobs|listing|vacancy|apply)/i.test(page.url()) && applicationFormVisible;
+  if (onJobUrl) return FormStep.DETAILS;
+
   return FormStep.UNKNOWN;
 }
 
@@ -47,12 +69,18 @@ async function ensureJobbermanLogin(page, ctx = {}) {
 
   try {
     if (!/login|sign-?in/i.test(page.url())) {
-      await page.goto(LOGIN_URL, { waitUntil: 'domcontentloaded' }).catch(() => {});
-      await page.waitForTimeout(1500);
+      const clickedLogin = await clickLoginFromJobbermanHome(page);
+      if (!clickedLogin) {
+        await page.goto(LOGIN_URL, { waitUntil: 'domcontentloaded' }).catch(() => {});
+      }
     }
+    await page.waitForTimeout(1500);
+    await acceptJobbermanCookies(page);
+    await page.waitForTimeout(1000);
+    await acceptJobbermanCookies(page);
 
     const emailInput = page
-      .locator('input[type="email"], input[name="email"], #email, input[autocomplete="username"]')
+      .locator('input[type="email"], input[name="username"], input[name="email"], #username, #email, input[autocomplete="username"], input[autocomplete="email"]')
       .first();
     await emailInput.waitFor({ state: 'visible', timeout: 10000 });
     await emailInput.fill(email);
@@ -66,14 +94,18 @@ async function ensureJobbermanLogin(page, ctx = {}) {
     }
     await passwordInput.waitFor({ state: 'visible', timeout: 10000 });
     await passwordInput.fill(password);
+    await page.waitForTimeout(15000);
 
     await Promise.all([
       page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {}),
-      page.getByRole('button', { name: /log ?in|sign ?in|continue|submit/i }).first().click({ force: true }).catch(() => {})
+      passwordInput.press('Enter').catch(() => {})
     ]);
     await page.waitForTimeout(2500);
 
     const after = await bodyText(page);
+    if (/page expired|419 error/i.test(after)) {
+      return { ok: false, reason: 'Jobberman login expired with a 419 CSRF/session error.' };
+    }
     if (/incorrect (email|password)|invalid (email|credentials|login)|wrong password/i.test(after)) {
       return { ok: false, reason: 'Jobberman rejected the credentials.' };
     }
@@ -94,11 +126,14 @@ async function fillStep(page, step, ctx) {
     throw manualReviewError('Jobberman automated login did not succeed; a logged-in jobseeker account is required to apply.');
   }
 
-  const applyButton = page.getByRole('button', { name: /apply here/i }).first();
-  if (await applyButton.isVisible({ timeout: 5000 }).catch(() => false)) {
-    await applyButton.click({ force: true });
-    await page.waitForTimeout(1500);
+  if (!await hasApplicationFormFields(page)) {
+    await openJobbermanApplyPanel(page);
   }
+
+  if (!await hasApplicationFormFields(page)) {
+    throw manualReviewError('Jobberman application form did not open after clicking Apply here.');
+  }
+  await acceptJobbermanCookies(page);
 
   const salary = jobbermanSalaryExpectation(ctx);
   const salaryInput = page.locator('input[name="salary_expectation"], #salary_expectation').first();
@@ -127,6 +162,118 @@ async function fillStep(page, step, ctx) {
   }
 }
 
+async function clickLoginFromJobbermanHome(page) {
+  await page.goto(HOME_URL, { waitUntil: 'domcontentloaded', timeout: 45000 }).catch(() => {});
+  await page.waitForTimeout(1500);
+  await acceptJobbermanCookies(page);
+  const loginLink = page
+    .locator('[data-cy="login-button-navbar"], a[href*="/account/login"]')
+    .first();
+  if (!await loginLink.isVisible({ timeout: 3000 }).catch(() => false)) return false;
+  await Promise.all([
+    page.waitForLoadState('domcontentloaded', { timeout: 15000 }).catch(() => {}),
+    loginLink.click({ force: true }).catch(() => {})
+  ]);
+  return /login|sign-?in/i.test(page.url());
+}
+
+async function acceptJobbermanCookies(page) {
+  const accept = page
+    .getByRole('button', { name: /accept all cookies|accept all/i })
+    .first();
+  if (await accept.isVisible({ timeout: 2000 }).catch(() => false)) {
+    await accept.click({ force: true }).catch(() => {});
+    await page.waitForTimeout(500);
+  }
+}
+
+async function hasApplicationFormFields(page) {
+  const submitVisible = await page
+    .getByRole('button', { name: /submit and apply/i })
+    .first()
+    .isVisible({ timeout: 800 })
+    .catch(() => false);
+  if (submitVisible) return true;
+
+  return page.evaluate(() => {
+    const visible = (el) => {
+      const rect = el.getBoundingClientRect();
+      const style = window.getComputedStyle(el);
+      return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+    };
+    return Array.from(document.querySelectorAll('input, textarea, select')).some((el) => {
+      if (!visible(el) || el.disabled) return false;
+      const key = [
+        el.getAttribute('name'),
+        el.getAttribute('id'),
+        el.getAttribute('placeholder'),
+        el.getAttribute('aria-label')
+      ].filter(Boolean).join(' ');
+      return /salary_expectation|uploaded_cv|cover_letter|description/i.test(key);
+    });
+  }).catch(() => false);
+}
+
+async function openJobbermanApplyPanel(page) {
+  const waitForForm = async () => {
+    await page
+      .getByRole('button', { name: /submit and apply/i })
+      .first()
+      .waitFor({ state: 'visible', timeout: 5000 })
+      .catch(() => {});
+    return hasApplicationFormFields(page);
+  };
+
+  if (await waitForForm()) return true;
+
+  const applyButtons = page.locator('button[aria-label="Apply here"], button[title="Apply here"]');
+  const count = typeof applyButtons.count === 'function'
+    ? await applyButtons.count().catch(() => 0)
+    : 0;
+  for (let index = count - 1; index >= 0; index -= 1) {
+    const button = applyButtons.nth(index);
+    if (!await button.isVisible({ timeout: 1000 }).catch(() => false)) continue;
+    await button.scrollIntoViewIfNeeded().catch(() => {});
+    await button.click({ force: true }).catch(() => {});
+    await page.waitForTimeout(1000);
+    await forceOpenJobbermanApplyForm(page);
+    if (await waitForForm()) return true;
+    await clickApplyAnywayIfVisible(page);
+    await forceOpenJobbermanApplyForm(page);
+    if (await waitForForm()) return true;
+  }
+
+  // Jobberman renders the application form server-side and hides it with an
+  // Alpine store flag. Some bot-safe/headless sessions do not fire the x-on
+  // click consistently, so set the same store flag the button would set.
+  await forceOpenJobbermanApplyForm(page);
+  await page.waitForTimeout(1000);
+  await clickApplyAnywayIfVisible(page);
+  await forceOpenJobbermanApplyForm(page);
+  return waitForForm();
+}
+
+async function forceOpenJobbermanApplyForm(page) {
+  await page.evaluate(() => {
+    const globalStore = window.Alpine?.store?.('global');
+    if (globalStore) {
+      globalStore.mobileApplyFormOpen = true;
+      globalStore.modal = '';
+    }
+  }).catch(() => {});
+  await page.waitForTimeout(500);
+}
+
+async function clickApplyAnywayIfVisible(page) {
+  const applyAnyway = page
+    .getByRole('button', { name: /apply anyway/i })
+    .first();
+  if (await applyAnyway.isVisible({ timeout: 1000 }).catch(() => false)) {
+    await applyAnyway.click({ force: true }).catch(() => {});
+    await page.waitForTimeout(1000);
+  }
+}
+
 async function advance(page, step, ctx) {
   if (ctx.config?.testMode || ctx.config?.noRealSubmission) {
     return {
@@ -136,9 +283,13 @@ async function advance(page, step, ctx) {
     };
   }
 
-  const submit = page.getByRole('button', { name: /submit and apply/i }).last();
-  if (await submit.isVisible({ timeout: 5000 }).catch(() => false)) {
+  await acceptJobbermanCookies(page);
+  const submit = await visibleButton(page, /submit and apply/i);
+  if (submit) {
+    await submit.scrollIntoViewIfNeeded().catch(() => {});
     await submit.click({ force: true });
+    await page.waitForTimeout(1500);
+    await clickApplyAnywayIfVisible(page);
     await page.waitForTimeout(5000);
     const submitted = await isSubmitted(page);
     return {
@@ -153,6 +304,16 @@ async function advance(page, step, ctx) {
     advanced: false,
     reason: 'Jobberman Submit and apply button was not visible.'
   };
+}
+
+async function visibleButton(page, namePattern) {
+  const buttons = page.getByRole('button', { name: namePattern });
+  const count = await buttons.count().catch(() => 0);
+  for (let index = 0; index < count; index += 1) {
+    const button = buttons.nth(index);
+    if (await button.isVisible({ timeout: 500 }).catch(() => false)) return button;
+  }
+  return null;
 }
 
 async function isSubmitted(page) {

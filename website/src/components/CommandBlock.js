@@ -16,7 +16,7 @@ export default function CommandBlock({ command, prompt = '$', label = 'Copy comm
   return (
     <div className={`command-block ${className}`.trim()} style={style}>
       <code>
-        {prompt && <span className="command-prompt">{prompt}</span>}
+        {prompt && <span className="command-prompt">{prompt} </span>}
         {command}
       </code>
       <button type="button" onClick={handleCopy} className="command-copy-button" title={label} aria-label={label}>

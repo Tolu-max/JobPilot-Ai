@@ -24,26 +24,31 @@ export const TaskTypes = Object.freeze({
 
 const ROUTES = {
   [TaskTypes.FAST_FILTER]: [
+    { provider: 'deepseek', modelFromConfig: 'deepseekModel', defaultModel: 'deepseek-v4-flash', costLevel: 'low' },
     { provider: 'openrouter', modelFromConfig: 'openRouterModel', defaultModel: 'meta-llama/llama-3.3-70b-instruct', costLevel: 'free' },
     { provider: 'groq', modelFromConfig: 'groqModel', defaultModel: 'llama-3.3-70b-versatile', costLevel: 'low' },
     { provider: 'gemini', modelFromConfig: 'geminiModel', defaultModel: 'gemini-2.0-flash', costLevel: 'medium' }
   ],
   [TaskTypes.APPLICATION_WRITING]: [
+    { provider: 'deepseek', modelFromConfig: 'deepseekModel', defaultModel: 'deepseek-v4-flash', costLevel: 'low' },
     { provider: 'groq', modelFromConfig: 'groqModel', defaultModel: 'llama-3.3-70b-versatile', costLevel: 'medium' },
     { provider: 'gemini', modelFromConfig: 'geminiModel', defaultModel: 'gemini-2.0-flash', costLevel: 'medium' },
     { provider: 'openrouter', modelFromConfig: 'openRouterModel', defaultModel: 'meta-llama/llama-3.3-70b-instruct', costLevel: 'free' }
   ],
   [TaskTypes.JOB_VERIFICATION]: [
+    { provider: 'deepseek', modelFromConfig: 'deepseekModel', defaultModel: 'deepseek-v4-flash', costLevel: 'low' },
     { provider: 'groq', modelFromConfig: 'groqModel', defaultModel: 'llama-3.3-70b-versatile', costLevel: 'low' },
     { provider: 'gemini', modelFromConfig: 'geminiModel', defaultModel: 'gemini-2.0-flash', costLevel: 'medium' },
     { provider: 'openrouter', modelFromConfig: 'openRouterModel', defaultModel: 'meta-llama/llama-3.3-70b-instruct', costLevel: 'free' }
   ],
   [TaskTypes.HIGH_VALUE_APPLICATION]: [
+    { provider: 'deepseek', modelFromConfig: 'deepseekModel', defaultModel: 'deepseek-v4-pro', costLevel: 'medium' },
     { provider: 'groq', modelFromConfig: 'groqModel', defaultModel: 'llama-3.3-70b-versatile', costLevel: 'medium' },
     { provider: 'gemini', modelFromConfig: 'geminiModel', defaultModel: 'gemini-2.0-flash', costLevel: 'medium' },
     { provider: 'openrouter', modelFromConfig: 'openRouterModel', defaultModel: 'meta-llama/llama-3.3-70b-instruct', costLevel: 'free' }
   ],
   [TaskTypes.FALLBACK_REASONING]: [
+    { provider: 'deepseek', modelFromConfig: 'deepseekModel', defaultModel: 'deepseek-v4-flash', costLevel: 'low' },
     { provider: 'groq', modelFromConfig: 'groqModel', defaultModel: 'llama-3.3-70b-versatile', costLevel: 'low' },
     { provider: 'gemini', modelFromConfig: 'geminiModel', defaultModel: 'gemini-2.0-flash', costLevel: 'medium' },
     { provider: 'openrouter', modelFromConfig: 'openRouterModel', defaultModel: 'meta-llama/llama-3.3-70b-instruct', costLevel: 'free' }
@@ -104,15 +109,17 @@ export async function request({ taskType, prompt, profile = {}, jobData = {}, fa
   }
 
   const failures = [];
+  const singleProviderOnly = config.aiSingleProviderOnly !== false;
 
-  for (const target of route) {
+  for (const target of singleProviderOnly ? route.slice(0, 1) : route) {
     const model = modelForTarget(target, config);
     if (!hasProviderKey(target.provider, config)) {
       failures.push(`${target.provider}/${model}: missing API key`);
       continue;
     }
 
-    for (let attempt = 0; attempt < 2; attempt += 1) {
+    const maxAttempts = singleProviderOnly ? 1 : 2;
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
       const attemptStartedAt = Date.now();
       try {
         const response = await callProvider(target.provider, model, prompt, config);
@@ -172,6 +179,7 @@ export async function request({ taskType, prompt, profile = {}, jobData = {}, fa
 }
 
 async function callProvider(provider, model, prompt, config) {
+  if (provider === 'deepseek') return callDeepSeek(model, prompt, config);
   if (provider === 'gemini') return callGemini(model, prompt, config);
   if (provider === 'groq') return callOpenAiCompatible('https://api.groq.com/openai/v1/chat/completions', config.groqApiKey, model, prompt);
   if (provider === 'openrouter') {
@@ -181,6 +189,17 @@ async function callProvider(provider, model, prompt, config) {
     });
   }
   throw new Error(`Unsupported provider: ${provider}`);
+}
+
+async function callDeepSeek(model, prompt, config) {
+  const baseUrl = String(config.deepseekBaseUrl || 'https://api.deepseek.com').replace(/\/$/, '');
+  return callOpenAiCompatible(`${baseUrl}/chat/completions`, config.deepseekApiKey, model, prompt, {}, {
+    response_format: { type: 'json_object' },
+    max_tokens: maxTokensForDeepSeekPrompt(prompt, config),
+    thinking: {
+      type: String(config.deepseekThinking || 'disabled').trim().toLowerCase() === 'enabled' ? 'enabled' : 'disabled'
+    }
+  });
 }
 
 async function callGemini(model, prompt, config) {
@@ -196,7 +215,7 @@ async function callGemini(model, prompt, config) {
   return String(response.text || '').trim();
 }
 
-async function callOpenAiCompatible(endpoint, apiKey, model, prompt, extraHeaders = {}) {
+async function callOpenAiCompatible(endpoint, apiKey, model, prompt, extraHeaders = {}, extraBody = {}) {
   const response = await fetch(endpoint, {
     method: 'POST',
     headers: {
@@ -216,7 +235,8 @@ async function callOpenAiCompatible(endpoint, apiKey, model, prompt, extraHeader
           content: prompt
         }
       ],
-      temperature: 0.2
+      temperature: 0.2,
+      ...extraBody
     })
   });
 
@@ -238,7 +258,7 @@ function routeFor(taskType, localScore, config = {}) {
 
 function prioritizeProvider(route, preferredProvider) {
   const preferred = String(preferredProvider || '').trim().toLowerCase();
-  if (!preferred || !['gemini', 'groq', 'openrouter'].includes(preferred)) return route;
+  if (!preferred || !['deepseek', 'gemini', 'groq', 'openrouter'].includes(preferred)) return route;
   return [
     ...route.filter((target) => target.provider === preferred),
     ...route.filter((target) => target.provider !== preferred)
@@ -264,6 +284,10 @@ async function simulateMockRouting({
   for (const target of route) {
     const model = modelForTarget(target, config);
     const modelUsed = `${target.provider}:${model}`;
+    if (isProviderDisabled(target.provider, config)) {
+      failures.push(`${modelUsed}: disabled`);
+      continue;
+    }
     const forcedFailure = shouldForceMockFailure(config, target.provider, model);
     const latencyMs = Date.now() - startedAt;
 
@@ -330,6 +354,7 @@ async function simulateMockRouting({
 
 function hasProviderKey(provider, config) {
   if (isProviderDisabled(provider, config)) return false;
+  if (provider === 'deepseek') return Boolean(config.deepseekApiKey);
   if (provider === 'gemini') return Boolean(config.geminiApiKey);
   if (provider === 'groq') return Boolean(config.groqApiKey);
   if (provider === 'openrouter') return Boolean(config.openRouterApiKey);
@@ -337,7 +362,7 @@ function hasProviderKey(provider, config) {
 }
 
 export function hasAvailableAiProvider(config = {}) {
-  return ['groq', 'openrouter', 'gemini'].some((provider) => hasProviderKey(provider, config));
+  return ['deepseek', 'groq', 'openrouter', 'gemini'].some((provider) => hasProviderKey(provider, config));
 }
 
 function isProviderDisabled(provider, config = {}) {
@@ -453,6 +478,15 @@ function resolveCachePath(config) {
 function estimateTokens(...values) {
   const chars = values.map((value) => String(value || '')).join('').length;
   return Math.ceil(chars / 4);
+}
+
+function maxTokensForDeepSeekPrompt(prompt, config = {}) {
+  const configured = Number.parseInt(config.deepseekMaxTokens, 10);
+  if (Number.isFinite(configured) && configured > 0) return configured;
+
+  const estimatedPromptTokens = estimateTokens(prompt);
+  if (estimatedPromptTokens < 1200) return config.deepseekFastFilterMaxTokens || 350;
+  return config.deepseekVerificationMaxTokens || 450;
 }
 
 function confidenceFor(taskType, attempt) {

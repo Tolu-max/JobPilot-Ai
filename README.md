@@ -6,11 +6,21 @@ JobPilot runs **locally first**. There's no required account, no hosted dependen
 
 The hosted product is a dashboard/account layer, not the default automation runner. The CLI does the sensitive work locally; hosted sync only needs safe job metadata such as title, score, status, source, and timestamps.
 
+## Product Modes
+
+JobPilot is designed to be useful in three stages:
+
+1. **Local-first CLI.** Run `jobpilot init`, `jobpilot run`, and `jobpilot scheduler` on your own computer. Your CV, provider keys, CAPTCHA keys, Telegram bot token, browser profile, and job history stay local.
+2. **Personal self-hosted runner.** Run the same CLI in your own Railway, Render, VPS, or Docker worker with a private volume mounted at `/app/data`. This is for users who want 24/7 automation but still own their secrets and profile files.
+3. **Hosted dashboard.** Use the web app for auth, review queues, analytics, setup help, and safe application metadata. The hosted dashboard should not store resumes, provider keys, CAPTCHA keys, Telegram tokens, cookies, or job-board passwords in the default open-source flow.
+
+The future paid/cloud version can add managed credits or top-ups, but the open-source base should remain local-first and bring-your-own-key.
+
 ---
 
 ## Automation Runbook
 
-For the recommended open-source operating model, see [docs/AUTOMATION_RUNBOOK.md](docs/AUTOMATION_RUNBOOK.md). In short: scrape and score automatically, review before live submit, and keep resumes, provider keys, CAPTCHA keys, Telegram tokens, and browser sessions local.
+For the recommended open-source operating model, see [docs/PRODUCT_MODES.md](docs/PRODUCT_MODES.md) and [docs/AUTOMATION_RUNBOOK.md](docs/AUTOMATION_RUNBOOK.md). In short: scrape and score automatically, review before live submit, and keep resumes, provider keys, CAPTCHA keys, Telegram tokens, and browser sessions local.
 
 Before publishing or contributing, also read [docs/SAFETY.md](docs/SAFETY.md), [SECURITY.md](SECURITY.md), [docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md), [docs/PXXL_DEPLOYMENT.md](docs/PXXL_DEPLOYMENT.md), [docs/RAILWAY_RUNNER.md](docs/RAILWAY_RUNNER.md), and [ROADMAP.md](ROADMAP.md).
 
@@ -93,7 +103,8 @@ All knobs live in `.env` (see [`.env.example`](.env.example) for the annotated l
 
 | Variable | Default | Notes |
 |---|---|---|
-| `AI_PROVIDER` | `gemini` | `gemini` \| `openrouter` \| `groq` |
+| `AI_PROVIDER` | `deepseek` | `deepseek` \| `gemini` \| `openrouter` \| `groq` |
+| `DEEPSEEK_API_KEY` | — | Bring your own DeepSeek key |
 | `GEMINI_API_KEY` | — | Free tier at aistudio.google.com |
 | `CAPSOLVER_API_KEY` | — | Optional paid solver for CAPTCHA-protected forms |
 | `AUTO_APPLY` | `false` | Master switch. The wizard sets per-profile overrides. |
@@ -113,6 +124,11 @@ SISTER_APPLICANT_EMAIL=sister@example.com
 SISTER_AUTO_APPLY=true
 SISTER_MAX_JOBS_PER_RUN=50
 ```
+
+For portable profiles, keep `resumePath` relative to the profile folder when
+possible, for example `resume.pdf`. Absolute paths from one machine can break on
+Railway, Render, Docker, or a different local computer. `jobpilot doctor`
+warns when a profile still points at a machine-specific resume path.
 
 ---
 
@@ -232,8 +248,8 @@ volume at `/app/data`, and runs `node cli.js scheduler` as the start command.
 Set your secrets in **Project → Variables**:
 
 ```
-AI_PROVIDER=gemini
-GEMINI_API_KEY=...
+AI_PROVIDER=deepseek
+DEEPSEEK_API_KEY=...
 CAPSOLVER_API_KEY=...
 TELEGRAM_BOT_TOKEN=...
 TELEGRAM_CHAT_ID=...
@@ -312,7 +328,7 @@ Browser and live tests are opt-in so CI and first-run setups don't hang.
 
 **Same job applied to twice.** Cross-profile dedupe is on by default. If you intentionally want both profiles to apply, set `ALLOW_DUPLICATE_JOBS=true`. Otherwise check `profiles/<name>/processedJobs.json` for the dupe entry — it's usually a hash collision from a URL change on the site side.
 
-**Gemini quota exceeded.** Free tier is generous but finite. Switch `AI_PROVIDER=openrouter` or `groq`, or raise `GEMINI_MIN_LOCAL_SCORE` so fewer jobs reach the AI tier.
+**AI quota exceeded.** Switch providers, e.g. `AI_PROVIDER=deepseek`, `openrouter`, `groq`, or `gemini`, or raise `GEMINI_MIN_LOCAL_SCORE` so fewer jobs reach the AI tier.
 
 **Tell me everything that's wrong:** `node cli.js doctor`.
 

@@ -23,7 +23,7 @@ const defaultSkillAliases = {
   'Customer Support': ['customer support', 'customer service', 'client support', 'customer success', 'support specialist', 'support clerk', 'support agent', 'support representative', 'helpdesk', 'help desk'],
   'Email Support': ['email support', 'inbox management', 'support tickets', 'ticket management', 'email handling'],
   'Live Chat Support': ['live chat', 'chat support', 'intercom', 'zendesk chat', 'chat agent', 'chat clerk'],
-  'Administrative Support': ['administrative support', 'admin assistant', 'executive assistant', 'operations coordinator', 'office assistant', 'office admin', 'office manager', 'admin support', 'clerical', 'clerk', 'receptionist', 'front desk'],
+  'Administrative Support': ['administrative support', 'administrative assistant', 'admin assistant', 'admin coordinator', 'executive assistant', 'operations coordinator', 'operations administrator', 'office assistant', 'office admin', 'office manager', 'back office', 'admin support', 'clerical', 'clerk', 'receptionist', 'front desk', 'records coordinator', 'document coordinator', 'property management assistant', 'booking coordinator', 'onboarding coordinator'],
   'Virtual Assistance': ['virtual assistant', 'va', 'remote assistant', 'personal assistant', 'executive assistant', 'appointment setter', 'appointment setting'],
   CRM: ['crm', 'hubspot', 'salesforce', 'zoho', 'pipedrive', 'customer relationship'],
   'Data Entry': ['data entry', 'data management', 'spreadsheets', 'data clerk', 'typist', 'typing', 'data processing', 'data input'],
@@ -53,55 +53,54 @@ const remotePatterns = [/remote/i, /work from home/i, /permanent work from home/
 const onsitePatterns = [/on[-\s]?site/i, /\bin office\b/i, /\bhybrid\b/i, /must be located in/i];
 const flexiblePatterns = [/part[-\s]?time/i, /20\s*-\s*34 hours/i, /flexible schedule/i, /\bflexible\b/i];
 
-export async function localMatchJob(job, candidateProfile, config = {}) {
-  const text = buildJobText(job);
-  const reasons = [];
-  const matchedSkills = [];
-  const missingSkills = [];
-  const roleFit = assessProfileRoleFit(job, candidateProfile, config);
+const sisterTransferableRolePatterns = [
+  /customer operations?/i,
+  /client operations?/i,
+  /operations? (?:assistant|specialist|coordinator|administrator)/i,
+  /(?:onboarding|implementation|program|community|booking|scheduling) (?:assistant|specialist|coordinator)/i,
+  /(?:guest|property|airbnb|reservation|order fulfillment|e-?commerce operations?) (?:assistant|specialist|coordinator)/i,
+  /(?:records|document|data|people|hr|account|vendor) (?:assistant|specialist|coordinator|administrator)/i,
+  /(?:billing|invoicing|accounts payable|accounts receivable|bookkeeping) (?:assistant|clerk|specialist|coordinator)/i,
+  /(?:customer|client|member|community) (?:success|experience|engagement|service|support)/i
+];
 
+export async function localMatchJob(job, candidateProfile, config = {}) {
+  const roleFit = assessProfileRoleFit(job, candidateProfile, config);
   if (!roleFit.allowed) {
     return {
       score: 0,
       recommendation: 'ignore',
-      matchedSkills,
-      missingSkills: candidateProfile.skills || [],
+      matchedSkills: [],
+      missingSkills: [],
       reasons: roleFit.reasons
     };
   }
 
-  const hardFilterReasons = findHardFilters(text, candidateProfile);
-
-  if (hardFilterReasons.length > 0) {
+  const hardFilters = uniqueCompact(defaultHardFilters, candidateProfile.hardFilters, config.preferences?.hardFilters);
+  const hardFilterHit = hardFilters.find((filter) => containsKeyword(buildJobText(job), filter));
+  if (hardFilterHit) {
     return {
       score: 0,
       recommendation: 'ignore',
-      matchedSkills,
-      missingSkills: candidateProfile.skills || [],
-      reasons: hardFilterReasons
+      matchedSkills: [],
+      missingSkills: [],
+      reasons: [`Hard filter matched: ${hardFilterHit}`]
     };
   }
 
-  const titleExclusionReasons = findTitleExclusions(job.title || '', candidateProfile, text);
-  if (titleExclusionReasons.length > 0) {
-    return {
-      score: 0,
-      recommendation: 'ignore',
-      matchedSkills,
-      missingSkills: candidateProfile.skills || [],
-      reasons: titleExclusionReasons
-    };
-  }
-
-  // Use AI for scoring instead of keyword matching
-  const aiScore = await getAiScore(job, candidateProfile, config);
+  // Cost boundary: this first-pass matcher must remain deterministic and local.
+  // Paid AI verification happens later in the pipeline only for strong matches.
+  const localScore = keywordBasedScore(job, candidateProfile, config);
 
   return {
-    score: aiScore.score,
-    recommendation: recommendationForScore(aiScore.score),
-    matchedSkills: aiScore.matchedSkills || [],
-    missingSkills: aiScore.missingSkills || [],
-    reasons: aiScore.reasons || ['AI-powered job matching']
+    score: localScore.score,
+    recommendation: recommendationForScore(localScore.score, {
+      ...candidateProfile,
+      profileName: config.profileName || candidateProfile.profileName
+    }),
+    matchedSkills: localScore.matchedSkills || [],
+    missingSkills: localScore.missingSkills || [],
+    reasons: localScore.reasons || ['Local CV and keyword matching']
   };
 }
 
@@ -243,6 +242,13 @@ function assessSisterRoleFit(corpus, profile = {}) {
 
   const hit = blocks.find((block) => block.pattern.test(corpus) && !block.allowed);
   if (hit) return { allowed: false, reasons: [hit.reason] };
+
+  // These are legitimate transferable paths for Sister. Keep the hard blocks
+  // above intact, but do not require an exact preferred-role title match.
+  if (sisterTransferableRolePatterns.some((pattern) => pattern.test(corpus))) {
+    return { allowed: true, reasons: ['Transferable Sister role family matched.'] };
+  }
+
   return { allowed: true, reasons: [] };
 }
 
@@ -388,6 +394,7 @@ function buildScoringPrompt(job, candidateProfile, config = {}) {
   const strengths = uniqueList(cv.strengths, candidateProfile.strengths).slice(0, 12);
   const cvSkills = uniqueList(cv.skills, candidateProfile.skills).slice(0, 25);
   const workHistory = formatWorkHistory(cv.workHistory || candidateProfile.workHistory || []);
+  const fallbackText = cv.rawTextPreview ? `\n(Raw CV Extract):\n${cv.rawTextPreview.slice(0, 1500)}` : '(none listed)';
   const careerBrain = compactText(config.careerBrainPrompt || '').slice(0, 1200);
 
   return `You are a career-matching assistant. Score how well a real job opening matches a real candidate's CV on a 0-100 scale. Be honest and calibrated — most jobs are not a great match.
@@ -408,7 +415,7 @@ Target seniority: ${(candidateProfile.targetSeniorities || []).join(', ') || 'en
 Remote preference: ${candidateProfile.remotePreference || 'remote_only'}
 
 Work history:
-${workHistory || '(none listed)'}
+${workHistory || fallbackText}
 
 Profile-specific guidance:
 ${careerBrain || '(none)'}
@@ -457,10 +464,27 @@ Required JSON shape:
 
 function profileSpecificScoringRules(config = {}, candidateProfile = {}) {
   const profileName = String(config.profileName || candidateProfile.profileName || candidateProfile.name || '').toLowerCase();
-  return `Additional Sister-specific hard rules:
+
+  if (isToluProfile(profileName, candidateProfile)) {
+    return `Additional Tolu-specific HARD RULES (MUST FOLLOW STRICTLY):
+- Candidate identity: Tolu is strictly a Web Developer, E-commerce/Shopify/WordPress Specialist, JavaScript/HTML/CSS Developer, and Technical SEO Specialist.
+- CRITICAL EXCLUSION: If the job title or main description is for Administrative Assistant, Executive Assistant, Virtual Assistant, Office Assistant, Non-Technical Customer Support/Service, Appointment Setter, Data Entry, Bookkeeper, Receptionist, or General Admin Support -> YOU MUST SCORE AT 0 and state in reasons that Tolu does NOT do administrative assistant or non-technical support work.
+- ONLY score > 50 if the role is genuinely focused on Web Development, Software Engineering, Technical SEO, WordPress, Shopify, or Web Administration.`;
+  }
+
+  if (isSisterProfile(profileName, candidateProfile)) {
+    return `Additional Sister-specific HARD RULES:
+- Candidate identity: Sister is targeting Customer Support, Virtual Assistant, Administrative Assistant, Operations Support, and Data Entry roles.
+- Give full credit for TRANSFERABLE experience. CRM use, inbox/ticket handling, customer communication, scheduling, data entry, record keeping, Google Workspace, spreadsheets, lead tracking, and general operations coordination transfer across industries.
+- For non-specialist roles such as Property/Airbnb Assistant, Booking Coordinator, Operations Assistant, Customer Success, Client Support, Administrative Assistant, Executive/Personal Assistant, Receptionist, Data Entry, and CRM Support: do NOT score below 60 merely because the exact industry is absent from the CV. Score 70-84 when most day-to-day duties match her demonstrated admin/support skills.
+- Missing familiarity with an industry is a moderate gap, not a different profession, unless the role requires a license, regulated expertise, clinical knowledge, formal accounting, legal training, or another specialist credential.
+- Do not invent availability conflicts from part-time/full-time wording or from the candidate currently running a business. Only penalize availability when the CV/profile explicitly says she is unavailable.
 - If the role requires a foreign language (Bilingual Spanish, German, French, etc.) and the candidate's CV only shows English, cap score at 0.
 - If the role is primarily SDR/BDR/outbound sales/cold calling/quota-carrying SaaS sales, cap score at 45 unless the CV shows direct cold-calling, quota, SaaS sales, Salesforce, or SDR/BDR work history evidence.
-- If the role is primarily standalone social media management/coordinator/content creator, cap score at 45 unless the CV shows hands-on social media campaign/platform/content-calendar/analytics ownership, not just general communication or admin support.`;
+- If the role is software developer, web engineer, devops, or financial trader -> cap score at 0.`;
+  }
+
+  return '';
 }
 
 function uniqueList(...sources) {
@@ -621,11 +645,19 @@ function findTitleExclusions(title, profile, fullText = '') {
     'appointment setter',
     'data entry'
   ]);
+  const sisterProfile = isSisterProfile(String(profile.profileName || '').toLowerCase(), profile);
+  const sisterBookkeepingEvidence = sisterProfile && (profile.skills || [])
+    .some((skill) => /bookkeep|financial records|invoice|accounting/i.test(String(skill)));
   return titleExclusions
     .filter((kw) => {
       const normalized = compactText(kw).toLowerCase();
       if (!normalized || !titleLower.includes(normalized)) return false;
       if (conditionalToluExclusions.has(normalized) && technicalWebEvidence.test(corpus)) return false;
+      if (
+        sisterBookkeepingEvidence &&
+        /^(bookkeeper|accountant)$/.test(normalized) &&
+        !/\b(senior|lead|manager|controller|tax|audit|public practice|chartered)\b/i.test(corpus)
+      ) return false;
       return true;
     })
     .map((kw) => `Title exclusion matched: ${kw}`);
@@ -635,7 +667,20 @@ const titleRelevanceKeywords = [
   'assistant', 'support', 'clerk', 'coordinator', 'administrator',
   'receptionist', 'secretary', 'typist', 'operator', 'representative',
   'agent', 'associate', 'specialist', 'customer', 'admin',
-  'virtual', 'helpdesk', 'data entry', 'scheduling'
+  'virtual', 'helpdesk', 'data entry', 'scheduling', 'operations',
+  'onboarding', 'booking', 'records', 'document', 'billing', 'invoicing',
+  'crm', 'property', 'order', 'fulfillment', 'community', 'client'
+];
+
+const sisterTransferableTitleKeywords = [
+  'administrative assistant', 'admin assistant', 'office assistant',
+  'virtual assistant', 'executive assistant', 'operations assistant',
+  'operations coordinator', 'operations administrator', 'customer operations',
+  'client operations', 'crm assistant', 'crm administrator', 'customer support',
+  'customer success', 'client support', 'appointment setter', 'appointment setting',
+  'scheduling coordinator', 'booking coordinator', 'onboarding coordinator',
+  'property assistant', 'airbnb assistant', 'order fulfillment', 'records coordinator',
+  'document coordinator', 'program coordinator', 'community coordinator'
 ];
 
 function scoreRoleMatch(title, text, profile) {
@@ -652,6 +697,12 @@ function scoreRoleMatch(title, text, profile) {
   const relevanceHits = titleRelevanceKeywords.filter((kw) => titleLower.includes(kw));
   if (relevanceHits.length >= 2) return { points: 10, reason: `Title relevance: ${relevanceHits.slice(0, 3).join(', ')} (+10)` };
   if (relevanceHits.length === 1) return { points: 5, reason: `Title relevance: ${relevanceHits[0]} (+5)` };
+
+  if (isSisterProfile(String(profile.profileName || '').toLowerCase(), profile)) {
+    const sisterTitle = title.toLowerCase();
+    const transferable = sisterTransferableTitleKeywords.find((keyword) => sisterTitle.includes(keyword));
+    if (transferable) return { points: 10, reason: `Sister transferable title: ${transferable} (+10)` };
+  }
 
   return { points: 0, reason: '' };
 }
@@ -797,11 +848,13 @@ function capitalize(value) {
   return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
-export function recommendationForScore(score) {
+export function recommendationForScore(score, context = {}) {
   if (score >= 95) return 'instant_apply';
   if (score >= 88) return 'auto_apply';
-  // Align review threshold with the prompt rubric:
-  // 70-84 is a good adjacent fit and should not be dropped as ignore.
-  if (score >= 70) return 'review';
+  const sisterProfile = isSisterProfile(String(context.profileName || '').toLowerCase(), context);
+  // Sister's CV explicitly supports transferable admin/CRM/operations work.
+  // Keep the broader review floor profile-specific so Tolu's technical filter
+  // does not become permissive for unrelated roles.
+  if (score >= (sisterProfile ? 40 : 70)) return 'review';
   return 'ignore';
 }

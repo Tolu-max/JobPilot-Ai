@@ -35,18 +35,62 @@ export async function runJobHunt(config, options = {}) {
   const cvData = await loadCvData(config).catch((err) => { console.warn(`[pipeline] CV parse skipped: ${err.message}`); return null; });
   if (cvData) {
     config.cvData = cvData;
-    await appendLog(`CV data loaded for ${config.profileName}: ${cvData.name || 'unknown'} | phone: ${cvData.phone ? '✓' : '✗'} | linkedin: ${cvData.linkedin ? '✓' : '✗'}`, config);
+    await withStartupTimeout(
+      appendLog(`CV data loaded for ${config.profileName}: ${cvData.name || 'unknown'} | phone: ${cvData.phone ? '✓' : '✗'} | linkedin: ${cvData.linkedin ? '✓' : '✗'}`, config),
+      5000,
+      'CV log append'
+    ).catch((error) => console.warn(`[pipeline] ${error.message}; continuing.`));
   }
-  const resumeText = await readResumeText(config.resumePath);
+  console.log(`[pipeline] Loading resume text for ${config.profileName}...`);
+  let resumeText = cvData ? buildResumeTextFromCvData(cvData) : '';
+  if (!resumeText) {
+    resumeText = await withStartupTimeout(
+      readResumeText(config.resumePath),
+      15000,
+      `Resume parsing for ${config.profileName}`
+    ).catch((error) => {
+      console.warn(`[pipeline] ${error.message}; using cached CV text.`);
+      return '';
+    });
+  } else {
+    console.log(`[pipeline] Reused cached CV text for ${config.profileName}; skipped duplicate PDF parse.`);
+  }
+  if (!resumeText.trim() && cvData) {
+    // PDF missing on server but cv-data.json cache exists — reconstruct resume text from cache.
+    const parts = [cvData.name, cvData.summary, (cvData.skills || []).join(', '), (cvData.experience || []).map(e => `${e.title} at ${e.company}`).join('; ')].filter(Boolean);
+    resumeText = parts.join('\n');
+    console.warn(`[pipeline] Resume PDF missing for ${config.profileName} — using cached cv-data.json as fallback.`);
+  }
   if (!resumeText.trim() && config.autoApply && !config.resumePlaceholder) {
     const message = `Resume text missing for ${config.profileName}. Check resumePath: ${config.resumePath}. Skipping this profile run to avoid low-quality scoring or applications.`;
     await appendLog(message, config);
     console.warn(`[pipeline] ${message}`);
     return [];
   }
-  await pullDashboardApprovals(config);
-  const pendingRun = await flushPendingApplyQueue(config, autoApplyBudget);
-  const scrapeResult = await withRetry(() => runScrapers(config), { retries: 1, delayMs: 5000 });
+  console.log(`[pipeline] Pulling dashboard approvals for ${config.profileName}...`);
+  await withStartupTimeout(
+    pullDashboardApprovals(config),
+    15000,
+    `Dashboard approval sync for ${config.profileName}`
+  ).catch((error) => console.warn(`[pipeline] ${error.message}; continuing with local state.`));
+  console.log(`[pipeline] Flushing pending apply queue for ${config.profileName}...`);
+  const pendingRun = await withStartupTimeout(
+    flushPendingApplyQueue(config, autoApplyBudget),
+    180000,
+    `Pending apply queue for ${config.profileName}`
+  ).catch((error) => {
+    console.warn(`[pipeline] ${error.message}; continuing to scrape.`);
+    return { manualReview: 0, blocked: 0, applied: 0, attempts: 0, failed: 1 };
+  });
+  console.log(`[pipeline] Starting scraper pass for ${config.profileName}...`);
+  const scrapeResult = await withStartupTimeout(
+    withRetry(() => runScrapers(config), { retries: 1, delayMs: 5000 }),
+    180000,
+    `BruntWork scraper pass for ${config.profileName}`
+  ).catch((error) => {
+    console.error(`[pipeline] ${error.message}`);
+    return { jobs: [], siteResults: [{ site: 'bruntwork', status: 'error', error: error.message }] };
+  });
   const jobs = scrapeResult.jobs;
   const runSummary = {
     ...scrapeResult,
@@ -100,8 +144,11 @@ export async function runJobHunt(config, options = {}) {
           await appendLog(`Pending apply blocked by final gate: ${job.title} - ${applyGate.reason}`, config);
           continue;
         }
-        if (!canAttemptAutoApply(autoApplyBudget)) {
-          const limitReason = autoApplyLimitReason(autoApplyBudget);
+        // Ensure applicationUrl is set from the live scraped job (most reliable)
+        const jobWithUrl = { ...job, applicationUrl: job.applicationUrl || existing.job_url || existing.applicationUrl || '' };
+        const source = jobWithUrl.source_site || jobWithUrl.source || 'unknown';
+        if (!canAttemptAutoApply(autoApplyBudget, source)) {
+          const limitReason = autoApplyLimitReason(autoApplyBudget, source);
           runSummary.jobsQueuedForReview += 1;
           results.push(rowFor(job, existing.score || 0, 'apply', 'pending', {
             reasons: [limitReason]
@@ -110,17 +157,13 @@ export async function runJobHunt(config, options = {}) {
           continue;
         }
         await appendLog(`Telegram-accepted job: ${job.title} — applying now`, config);
-        // Ensure applicationUrl is set from the live scraped job (most reliable)
-        const jobWithUrl = { ...job, applicationUrl: job.applicationUrl || existing.job_url || existing.applicationUrl || '' };
         const appPackage = {
           coverLetterText: existing.cover_letter || existing.coverLetterText || '',
           applicationAnswers: existing.application_answers || existing.improved_answers || existing.applicationAnswers || {}
         };
-        consumeAutoApplyAttempt(autoApplyBudget);
+        consumeAutoApplyAttempt(autoApplyBudget, source);
         runSummary.jobsAutoApplyAttempts += 1;
-        const applyResult = await withRetry(() => attemptApplication(jobWithUrl, appPackage, config), {
-          retries: 2, delayMs: 5000, backoff: 'exponential'
-        });
+        const applyResult = await attemptApplicationOnce(jobWithUrl, appPackage, config);
         const row = rowFor(jobWithUrl, existing.score || 0, 'apply', statusForApplicationResult(applyResult));
         if (applyResult.outcome === ApplicationOutcome.APPLIED_SUCCESSFULLY) {
           runSummary.jobsAutoApplied += 1;
@@ -151,7 +194,8 @@ export async function runJobHunt(config, options = {}) {
         continue;
       }
 
-      if (shouldSkipProcessed(existing) && !options.reprocess) {
+      const canReprocessNonApplied = options.reprocessNonApplied === true && existing?.status !== 'applied';
+      if (shouldSkipProcessed(existing) && !options.reprocess && !canReprocessNonApplied) {
         const dedupedRow = rowFor(job, existing.score || 0, existing.decision || existing.status, existing.status);
         dedupedRow.deduped = true;
         results.push(dedupedRow);
@@ -201,7 +245,7 @@ export async function runJobHunt(config, options = {}) {
       });
 
       // AI-Powered Resume & Cover Letter Tailoring
-      if (optimizer.application_score > 85 && hasAvailableAiProvider(config)) {
+      if (config.aiResumeTailoringEnabled === true && optimizer.application_score > 85 && hasAvailableAiProvider(config)) {
         try {
           const { tailorResumeAndCoverLetter } = await import('./resumeTailor.js');
           const jobContext = `${job.description || ''} ${job.requirements || ''}`;
@@ -249,8 +293,8 @@ export async function runJobHunt(config, options = {}) {
           });
           await appendLog(`Queued for review: ${job.title} (${optimizer.application_score}) - ${autoApplyGate.reason}`, config);
           await sendReviewNotification({ ...job, reviewReason: autoApplyGate.reason }, optimizer.application_score, config);
-        } else if (!canAttemptAutoApply(autoApplyBudget)) {
-          const limitReason = autoApplyLimitReason(autoApplyBudget);
+        } else if (!canAttemptAutoApply(autoApplyBudget, job.source_site || job.source || 'unknown')) {
+          const limitReason = autoApplyLimitReason(autoApplyBudget, job.source_site || job.source || 'unknown');
           row.status = 'pending';
           runSummary.jobsQueuedForReview += 1;
           await addReviewJob(job, analysis, limitReason, config);
@@ -264,15 +308,11 @@ export async function runJobHunt(config, options = {}) {
           await appendLog(`Queued for review: ${job.title} (${optimizer.application_score}) - ${limitReason}`, config);
           await sendReviewNotification({ ...job, reviewReason: limitReason }, optimizer.application_score, config);
         } else {
-          const attemptNumber = consumeAutoApplyAttempt(autoApplyBudget);
+          const attemptNumber = consumeAutoApplyAttempt(autoApplyBudget, job.source_site || job.source || 'unknown');
           runSummary.jobsAutoApplyAttempts += 1;
           const limitLabel = Number.isFinite(autoApplyBudget.limit) ? String(autoApplyBudget.limit) : 'unlimited';
           await appendLog(`Auto-apply attempt ${attemptNumber}/${limitLabel}: ${job.title}`, config);
-          const applyResult = await withRetry(() => attemptApplication(job, optimizer, config), {
-            retries: 2,
-            delayMs: 5000,
-            backoff: 'exponential'
-          });
+          const applyResult = await attemptApplicationOnce(job, optimizer, config);
           row.status = statusForApplicationResult(applyResult);
           if (applyResult.outcome === ApplicationOutcome.APPLIED_SUCCESSFULLY) {
             runSummary.jobsAutoApplied += 1;
@@ -372,27 +412,61 @@ export async function runJobHunt(config, options = {}) {
   return results;
 }
 
+function withStartupTimeout(promise, timeoutMs, label) {
+  let timer;
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs);
+    })
+  ]).finally(() => clearTimeout(timer));
+}
+
+function buildResumeTextFromCvData(cvData = {}) {
+  const experience = Array.isArray(cvData.experience)
+    ? cvData.experience.map((item) => typeof item === 'string' ? item : `${item.title || ''} ${item.company || ''} ${item.description || ''}`)
+    : [cvData.experience];
+  return [
+    cvData.name,
+    cvData.summary,
+    cvData.rawTextPreview,
+    ...(cvData.skills || []),
+    ...experience,
+    ...(cvData.education || []).map((item) => typeof item === 'string' ? item : JSON.stringify(item))
+  ].filter(Boolean).join('\n').trim();
+}
+
 function createAutoApplyBudget(config = {}) {
   const limit = Number(config.maxAutoApplyPerRun);
+  const configuredSiteLimits = config.autoApplyPerSiteLimit || config.preferences?.autoApplyPerSiteLimit || {};
   return {
     limit: Number.isFinite(limit) && limit >= 0 ? limit : Infinity,
-    attempts: 0
+    attempts: 0,
+    siteLimits: configuredSiteLimits,
+    siteAttempts: {}
   };
 }
 
-function canAttemptAutoApply(budget) {
+function canAttemptAutoApply(budget, source = 'unknown') {
   if (!budget) return true;
-  return budget.attempts < budget.limit;
+  if (budget.attempts >= budget.limit) return false;
+  const siteLimit = Number(budget.siteLimits?.[source]);
+  return !Number.isFinite(siteLimit) || (budget.siteAttempts?.[source] || 0) < siteLimit;
 }
 
-function consumeAutoApplyAttempt(budget) {
+function consumeAutoApplyAttempt(budget, source = 'unknown') {
   if (!budget) return 1;
   budget.attempts += 1;
+  budget.siteAttempts[source] = (budget.siteAttempts[source] || 0) + 1;
   return budget.attempts;
 }
 
-function autoApplyLimitReason(budget) {
+function autoApplyLimitReason(budget, source = 'unknown') {
   if (budget?.limit === 0) return 'Auto-apply is disabled for this run. Awaiting user approval.';
+  const siteLimit = Number(budget?.siteLimits?.[source]);
+  if (Number.isFinite(siteLimit) && (budget?.siteAttempts?.[source] || 0) >= siteLimit) {
+    return `${source} auto-apply site limit reached (${siteLimit} per run). Awaiting review.`;
+  }
   return 'Auto-apply run limit reached. Awaiting user approval.';
 }
 
@@ -416,8 +490,9 @@ export async function flushPendingApplyQueue(config, autoApplyBudget = createAut
   let profile = null;
   await appendLog(`Flushing ${pending.length} Telegram-approved job(s)`, config);
   for (const record of pending) {
-    if (!canAttemptAutoApply(autoApplyBudget)) {
-      await appendLog(`Pending apply held: ${record.title} - ${autoApplyLimitReason(autoApplyBudget)}`, config);
+    const source = record.source_site || record.source || 'unknown';
+    if (!canAttemptAutoApply(autoApplyBudget, source)) {
+      await appendLog(`Pending apply held: ${record.title} - ${autoApplyLimitReason(autoApplyBudget, source)}`, config);
       summary.held += 1;
       break;
     }
@@ -451,11 +526,9 @@ export async function flushPendingApplyQueue(config, autoApplyBudget = createAut
       coverLetterText: record.cover_letter || record.coverLetterText || '',
       applicationAnswers: record.application_answers || record.improved_answers || record.applicationAnswers || {}
     };
-    consumeAutoApplyAttempt(autoApplyBudget);
+    consumeAutoApplyAttempt(autoApplyBudget, source);
     summary.attempts += 1;
-    const applyResult = await withRetry(() => attemptApplication(job, appPackage, config), {
-      retries: 2, delayMs: 5000, backoff: 'exponential'
-    });
+    const applyResult = await attemptApplicationOnce(job, appPackage, config);
     if (applyResult.outcome === ApplicationOutcome.APPLIED_SUCCESSFULLY) {
       summary.applied += 1;
       await upsertJobRecord(config, job, 'applied', {
@@ -497,6 +570,7 @@ export async function validateLiveSubmitReadiness({ job, profile, existing = {},
   const applicationScore = bestStoredApplicationScore(existing);
   const liveSubmitFloor = Number.parseInt(config.applicationReviewScoreFloor, 10);
   const effectiveLiveSubmitFloor = Number.isFinite(liveSubmitFloor) ? liveSubmitFloor : 55;
+  const manuallyApproved = isManualApplyApproval(existing);
 
   if (!isRemoteEligibleForLiveSubmit(job, config)) {
     return {
@@ -505,7 +579,9 @@ export async function validateLiveSubmitReadiness({ job, profile, existing = {},
     };
   }
 
-  if (!Number.isFinite(applicationScore) || applicationScore <= effectiveLiveSubmitFloor) {
+  // A person explicitly approving a reviewed job has already made the score
+  // decision. Keep every other live-submit gate below in force.
+  if ((!Number.isFinite(applicationScore) || applicationScore <= effectiveLiveSubmitFloor) && !manuallyApproved) {
     return {
       ready: false,
       reason: `Application score ${Number.isFinite(applicationScore) ? applicationScore : 'unknown'} is not above live-submit floor ${effectiveLiveSubmitFloor}.`
@@ -521,7 +597,6 @@ export async function validateLiveSubmitReadiness({ job, profile, existing = {},
   }
 
   const verification = existing.gemini || {};
-  const manuallyApproved = isManualApplyApproval(existing);
   if (verification.should_apply === false && !manuallyApproved) {
     return {
       ready: false,
@@ -553,7 +628,17 @@ export function isRemoteEligibleForLiveSubmit(job = {}, config = {}) {
   if (config.liveSubmitRemoteOnly === false || config.remoteOnlyLiveSubmit === false) return true;
 
   const source = String(job.source_site || job.source || '').toLowerCase();
-  if (source === 'bruntwork') return true;
+  // These scrapers only emit jobs that pass their source-level remote policy.
+  // Trusting that invariant prevents sparse stored records from losing the
+  // remote signal that was present in the original listing/API response.
+  const trustedRemoteSources = new Set([
+    'bruntwork',
+    'himalayas',
+    'weworkremotely',
+    'workingnomads',
+    'realworkfromanywhere'
+  ]);
+  if (trustedRemoteSources.has(source)) return true;
 
   const rawText = typeof job.raw === 'string'
     ? job.raw
@@ -704,6 +789,17 @@ export function getAiConsiderationFloor(config = {}) {
   return 40;
 }
 
+async function attemptApplicationOnce(job, appPackage, config) {
+  const result = await attemptApplication(job, appPackage, config);
+  if (String(job.source_site || job.source || '').toLowerCase() === 'bruntwork' && result.outcome !== ApplicationOutcome.APPLIED_SUCCESSFULLY) {
+    return {
+      ...result,
+      reason: `BruntWork application was not confirmed as submitted: ${result.reason || 'incomplete application flow'}`
+    };
+  }
+  return result;
+}
+
 function rowFor(job, score, decision, status, analysis = {}) {
   return {
     title: job.title,
@@ -810,7 +906,8 @@ export function getReviewPromotion(config, job, local, verification, optimizer, 
     Number.isFinite(adjustedScore) &&
     adjustedScore >= threshold &&
     Number.isFinite(applicationScore) &&
-    applicationScore >= threshold
+    applicationScore >= threshold &&
+    (aligned || profileName.includes('sister'))
   ) {
     return {
       promoted: true,
@@ -837,7 +934,7 @@ export function isProfileAlignedRole(config = {}, job = {}) {
 
   if (profileName.includes('sister')) {
     if (source === 'influx') return false;
-    return /\b(customer support|customer service|customer success|virtual assistant|va assistant|administrative assistant|admin assistant|executive assistant|crm|hubspot|zendesk|data entry|calendar|lead generation|lead qualification|appointment setter|sales support|sales pipeline|business development|operations coordinator|marketing assistant|client success|telemarketer|outbound)\b/i.test(text);
+    return /\b(customer support|customer service|customer success|customer operations|client operations|virtual assistant|va assistant|administrative assistant|admin assistant|executive assistant|crm|hubspot|zendesk|data entry|calendar|lead generation|lead qualification|appointment setter|sales support|sales pipeline|business development|operations (?:assistant|specialist|coordinator|administrator)|marketing assistant|client success|client experience|community (?:assistant|specialist|coordinator)|program coordinator|onboarding coordinator|booking coordinator|scheduling coordinator|guest services|property assistant|airbnb assistant|order fulfillment|e-commerce operations|records coordinator|document coordinator|hr coordinator|people operations|vendor coordinator|account coordinator|billing support|invoicing assistant|bookkeeping|accounting assistant|accounts payable assistant|accounts receivable assistant|telemarketer|outbound)\b/i.test(text);
   }
 
   return false;

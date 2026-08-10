@@ -89,6 +89,11 @@ export class BaseScraper {
   }
 
   resolveMaxJobsPerRun() {
+    if (this.config?.hasMaxJobsOverride) {
+      const globalLimit = Number.parseInt(this.config.maxJobsPerRun, 10);
+      if (Number.isFinite(globalLimit)) return globalLimit;
+    }
+
     const siteLimit = Number.parseInt(this.siteConfig.maxJobsPerRun, 10);
     if (Number.isFinite(siteLimit)) return siteLimit;
 

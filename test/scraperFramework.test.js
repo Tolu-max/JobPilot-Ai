@@ -5,13 +5,19 @@ import os from 'node:os';
 import path from 'node:path';
 import { createJobHash } from '../src/jobHash.js';
 import { BaseScraper } from '../src/scrapers/baseScraper.js';
-import { parseJobDetail as parseBruntWorkJobDetail, parseListingLinks as parseBruntWorkListingLinks } from '../src/scrapers/bruntwork.js';
+import { BruntWorkScraper, fetchBruntWorkJobDetail, linksSinceLastSeen as bruntWorkLinksSinceLastSeen, parseJobDetail as parseBruntWorkJobDetail, parseListingLinks as parseBruntWorkListingLinks, resolveBruntWorkDetailScanLimit, sortBruntWorkLinksNewestFirst } from '../src/scrapers/bruntwork.js';
 import { filterInfluxJobsByPolicy, parseInfluxJobDetail, parseInfluxJobLinks } from '../src/scrapers/influx.js';
-import { filterJobbermanJobsByPolicy, parseJobbermanJobDetail, parseJobbermanListingLinks, resolveJobbermanBoardUrls } from '../src/scrapers/jobberman.js';
-import { orderedEnabledSites } from '../src/scrapers/index.js';
+import { JobbermanScraper, filterJobbermanJobsByPolicy, jobsSinceLastSeen as jobbermanJobsSinceLastSeen, parseJobbermanJobDetail, parseJobbermanListingLinks, resolveJobbermanBoardUrls, resolveJobbermanDetailScanLimit, sortJobbermanJobsNewestFirst } from '../src/scrapers/jobberman.js';
+import { isCoolingDown, orderedEnabledSites, updateRunState } from '../src/scrapers/index.js';
 import { RemoteJobsOrgScraper } from '../src/scrapers/remotejobsorg.js';
 import { RemoteOkScraper } from '../src/scrapers/remoteok.js';
 import { GreenhouseScraper } from '../src/scrapers/greenhouse.js';
+import { WeWorkRemotelyScraper, parseListingLinks as parseWeWorkRemotelyLinks, parseJobDetail as parseWeWorkRemotelyJobDetail } from '../src/scrapers/weworkremotely.js';
+import { JobicyScraper } from '../src/scrapers/jobicy.js';
+import { TheMuseScraper } from '../src/scrapers/themuse.js';
+import { ArbeitnowScraper } from '../src/scrapers/arbeitnow.js';
+import { RealWorkFromAnywhereScraper } from '../src/scrapers/realworkfromanywhere.js';
+import { WorkingNomadsScraper } from '../src/scrapers/workingnomads.js';
 import { classifyApplyUrl, detectDownstreamAdapter } from '../src/adapters/remoteok.js';
 import {
   classifyApplyUrl as classifyApplyDestination,
@@ -130,7 +136,7 @@ test('bruntwork parser discovers listing links and detail fields from static HTM
   `, 'https://bruntworkcareers.co/search');
 
   assert.equal(links.length, 1);
-  assert.equal(links[0].applicationUrl, 'https://bruntworkcareers.co/jobs/123');
+  assert.equal(links[0].applicationUrl, 'https://bruntworkcareers.co/jobs/123/apply');
 
   const detail = parseBruntWorkJobDetail(`
     <p class="hidden lg:block text-4xl font-medium mb-6">SEO Specialist</p>
@@ -150,7 +156,142 @@ test('bruntwork parser discovers listing links and detail fields from static HTM
   assert.match(detail.requirements, /Technical SEO/);
   assert.match(detail.responsibilities, /Run SEO audits/);
   assert.equal(detail.jobType, 'Part Time');
+  assert.equal(detail.location, 'Remote');
   assert.equal(detail.postedAt, 'Jun 01 2026');
+});
+
+test('bruntwork parser accepts absolute, single-quoted, query, and apply links', () => {
+  const links = parseBruntWorkListingLinks(`
+    <a href='https://bruntworkcareers.co/jobs/900/apply?source=search'>Newest role</a>
+    <a href="/jobs/901?utm_source=board">Another role</a>
+    <a href="/jobs/900">Duplicate form</a>
+  `, 'https://bruntworkcareers.co/search');
+
+  assert.deepEqual(links.map((link) => link.applicationUrl), [
+    'https://bruntworkcareers.co/jobs/900/apply',
+    'https://bruntworkcareers.co/jobs/901/apply'
+  ]);
+});
+
+test('bruntwork scans beyond the final profile limit to avoid stale dedupe windows', () => {
+  assert.equal(resolveBruntWorkDetailScanLimit({}, 10), 30);
+  assert.equal(resolveBruntWorkDetailScanLimit({ detailScanLimit: 50 }, 10), 50);
+  assert.equal(resolveBruntWorkDetailScanLimit({ detailScanLimit: 5 }, 10), 10);
+});
+
+test('site cooldown is measured from scrape start, not completion', () => {
+  const now = Date.now();
+  const state = {
+    sites: {
+      bruntwork: {
+        lastStartedAt: new Date(now - 4 * 60 * 1000).toISOString(),
+        lastRunAt: new Date(now - 30 * 1000).toISOString()
+      }
+    }
+  };
+
+  assert.equal(isCoolingDown('bruntwork', { cooldownMinutes: 3 }, state), false);
+});
+
+test('site cooldown tolerates small scheduler jitter', () => {
+  const state = {
+    sites: {
+      jobberman: {
+        lastStartedAt: new Date(Date.now() - (3 * 60 * 1000 - 5000)).toISOString()
+      }
+    }
+  };
+
+  assert.equal(isCoolingDown('jobberman', { cooldownMinutes: 3 }, state), false);
+});
+
+test('site run state persists separate start and completion timestamps', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'jobpilot-site-state-'));
+  const siteRunStatePath = path.join(dir, 'siteRunState.json');
+  const startedAt = new Date(Date.now() - 5000).toISOString();
+  const state = { sites: {} };
+
+  await updateRunState({ siteRunStatePath }, state, 'bruntwork', {
+    status: 'ok',
+    jobCount: 2,
+    startedAt
+  });
+
+  const stored = JSON.parse(await fs.readFile(siteRunStatePath, 'utf8'));
+  assert.equal(stored.sites.bruntwork.lastStartedAt, startedAt);
+  assert.equal(stored.sites.bruntwork.lastStatus, 'ok');
+  assert.equal(stored.sites.bruntwork.lastJobCount, 2);
+  assert.ok(new Date(stored.sites.bruntwork.lastRunAt).getTime() >= new Date(startedAt).getTime());
+});
+
+test('bruntwork listing links preserve page order (newest first)', () => {
+  const links = [
+    { applicationUrl: 'https://bruntworkcareers.co/jobs/100' },
+    { applicationUrl: 'https://bruntworkcareers.co/jobs/300' },
+    { applicationUrl: 'https://bruntworkcareers.co/jobs/200' }
+  ];
+
+  assert.deepEqual(
+    sortBruntWorkLinksNewestFirst(links).map((link) => link.applicationUrl),
+    [
+      'https://bruntworkcareers.co/jobs/100',
+      'https://bruntworkcareers.co/jobs/300',
+      'https://bruntworkcareers.co/jobs/200'
+    ]
+  );
+});
+
+test('bruntwork cursor keeps only listings newer than the previous top listing', () => {
+  const links = [
+    { applicationUrl: 'https://bruntworkcareers.co/jobs/new-3' },
+    { applicationUrl: 'https://bruntworkcareers.co/jobs/new-2' },
+    { applicationUrl: 'https://bruntworkcareers.co/jobs/previous-top' },
+    { applicationUrl: 'https://bruntworkcareers.co/jobs/old-1' }
+  ];
+
+  assert.deepEqual(
+    bruntWorkLinksSinceLastSeen(links, 'https://bruntworkcareers.co/jobs/previous-top').map((link) => link.applicationUrl),
+    [
+      'https://bruntworkcareers.co/jobs/new-3',
+      'https://bruntworkcareers.co/jobs/new-2'
+    ]
+  );
+});
+
+test('bruntwork direct detail fetch hydrates real title and description for targeted URLs', async () => {
+  const html = `
+    <p class="hidden lg:block text-4xl font-medium mb-6">Senior Website Developer</p>
+    <div class="text-gray-600 job-description">
+      <p>Job Overview:<br>Build and maintain client websites.</p>
+      <p>Core Responsibilities:<br></p>
+      <ul><li>Develop WordPress and Shopify pages</li></ul>
+      <p>Requirements<br></p>
+      <ul><li>JavaScript</li><li>SEO knowledge</li></ul>
+    </div></div><div class="rounded-2xl">
+    <div class="w-1/4"><p>Job Type</p><p>Full Time</p><p>Work Schedule and Timezone</p><p>Monday</p><p>Published on</p><p>Jun 30 2026</p></div></div>
+  `;
+
+  class FakeBruntWorkScraper extends BruntWorkScraper {
+    async fetchText(url) {
+      assert.equal(url, 'https://apply.bruntworkcareers.co/jobs/57784373920');
+      return html;
+    }
+  }
+
+  const originalFetch = BruntWorkScraper.prototype.fetchText;
+  BruntWorkScraper.prototype.fetchText = FakeBruntWorkScraper.prototype.fetchText;
+  try {
+    const job = await fetchBruntWorkJobDetail(
+      { maxJobsPerRun: 1 },
+      'https://apply.bruntworkcareers.co/jobs/57784373920'
+    );
+    assert.equal(job.title, 'Senior Website Developer');
+    assert.match(job.description, /Build and maintain client websites/);
+    assert.match(job.requirements, /JavaScript/);
+    assert.equal(job.source_site, 'bruntwork');
+  } finally {
+    BruntWorkScraper.prototype.fetchText = originalFetch;
+  }
 });
 
 test('influx policy prefers Nigeria and falls back to non-bilingual roles', () => {
@@ -171,12 +312,14 @@ test('influx policy prefers Nigeria and falls back to non-bilingual roles', () =
 
 test('jobberman parser discovers listing links and JSON-LD job detail', () => {
   const links = parseJobbermanListingLinks(`
+    <link rel="prerender" href="https://www.jobberman.com/listings/customer-success-associate-9kkdd5?utm_source=jobs">
     <a href="/listings/customer-success-associate-9kkdd5">Customer Success Associate</a>
     <a href="https://www.jobberman.com/listings/customer-success-associate-9kkdd5">Duplicate</a>
   `, 'https://www.jobberman.com/jobs/customer-service-support/remote');
 
   assert.equal(links.length, 1);
   assert.equal(links[0].jobUrl, 'https://www.jobberman.com/listings/customer-success-associate-9kkdd5');
+  assert.equal(links[0].remoteBoard, true);
 
   const detail = parseJobbermanJobDetail(`
     <script type="application/ld+json">
@@ -211,18 +354,123 @@ test('jobberman parser discovers listing links and JSON-LD job detail', () => {
   assert.equal(detail.location, 'Remote (NG)');
   assert.equal(detail.salary, 'NGN 250000-400000 MONTH');
   assert.match(detail.responsibilities, /Help customers/);
+  assert.equal(detail.raw.remoteBoard, true);
+  assert.equal(detail.raw.jobLocationType, 'TELECOMMUTE');
 });
 
 test('jobberman policy keeps recent remote jobs only', () => {
   const jobs = [
     { title: 'Recent Remote', location: 'Remote (NG)', postedAt: new Date().toISOString(), raw: { jobLocationType: 'TELECOMMUTE' } },
+    { title: 'Recent Remote Board', location: 'Nigeria, NG', postedAt: new Date().toISOString(), raw: { remoteBoard: true } },
     { title: 'Old Remote', location: 'Remote (NG)', postedAt: '2026-01-01T00:00:00.000Z', raw: { jobLocationType: 'TELECOMMUTE' } },
     { title: 'Recent Onsite', location: 'Lagos', postedAt: new Date().toISOString(), raw: { jobLocationType: '' } }
   ];
 
   assert.deepEqual(
     filterJobbermanJobsByPolicy(jobs, { remoteOnly: true, maxAgeDays: 30 }).map((job) => job.title),
-    ['Recent Remote']
+    ['Recent Remote', 'Recent Remote Board']
+  );
+});
+
+test('jobberman jobs are sorted newest first after detail parsing', () => {
+  const jobs = [
+    { title: 'Older', postedAt: '2026-06-01T00:00:00.000Z' },
+    { title: 'Newest', postedAt: '2026-07-01T00:00:00.000Z' },
+    { title: 'Unknown', postedAt: '' }
+  ];
+
+  assert.deepEqual(sortJobbermanJobsNewestFirst(jobs).map((job) => job.title), ['Newest', 'Older', 'Unknown']);
+});
+
+test('jobberman cursor keeps only jobs newer than the previous top listing', () => {
+  const jobs = [
+    { title: 'Newer', applicationUrl: 'https://www.jobberman.com/listings/newer' },
+    { title: 'Previous top', applicationUrl: 'https://www.jobberman.com/listings/previous-top' },
+    { title: 'Older', applicationUrl: 'https://www.jobberman.com/listings/older' }
+  ];
+
+  assert.deepEqual(
+    jobbermanJobsSinceLastSeen(jobs, 'https://www.jobberman.com/listings/previous-top').map((job) => job.title),
+    ['Newer']
+  );
+});
+
+test('jobberman scans a recent window before applying the final profile limit', async () => {
+  class FakeJobbermanScraper extends JobbermanScraper {
+    async fetchText(url) {
+      if (/\/jobs\/software-data\/remote$/.test(url)) {
+        return `
+          <a href="/listings/old-developer-111aaa">Old Developer</a>
+          <a href="/listings/new-developer-222bbb">New Developer</a>
+        `;
+      }
+
+      const isNew = /new-developer/.test(url);
+      return `
+        <script type="application/ld+json">
+          {
+            "@context": "https://schema.org",
+            "@type": "JobPosting",
+            "@id": "https://www.jobberman.com/#/schema/JobPosting/listing-${isNew ? '222' : '111'}",
+            "title": "${isNew ? 'New Developer' : 'Old Developer'}",
+            "description": "<p>Build websites</p>",
+            "datePosted": "${isNew ? '2026-07-02T00:00:00.000000Z' : '2026-06-01T00:00:00.000000Z'}",
+            "jobLocationType": "TELECOMMUTE",
+            "applicantLocationRequirements": { "@type": "Country", "name": "NG" }
+          }
+        </script>
+      `;
+    }
+  }
+
+  const scraper = new FakeJobbermanScraper(
+    { maxJobsPerRun: 10 },
+    {
+      categories: ['software-data'],
+      maxJobsPerRun: 1,
+      detailScanLimit: 2,
+      remoteOnly: true
+    }
+  );
+
+  const jobs = await scraper.scrape();
+  assert.equal(resolveJobbermanDetailScanLimit({ maxJobsPerRun: 1 }, 1), 25);
+  assert.equal(jobs.length, 1);
+  assert.equal(jobs[0].title, 'New Developer');
+});
+
+test('jobberman policy can exclude noisy titles without scanning full page text', () => {
+  const jobs = [
+    {
+      title: 'JavaScript Developer',
+      location: 'Remote (NG)',
+      postedAt: new Date().toISOString(),
+      description: 'Similar jobs include Senior Devops Engineer.',
+      raw: { jobLocationType: 'TELECOMMUTE' }
+    },
+    {
+      title: 'Senior Devops Engineer',
+      location: 'Remote (NG)',
+      postedAt: new Date().toISOString(),
+      raw: { jobLocationType: 'TELECOMMUTE' }
+    }
+  ];
+
+  assert.deepEqual(
+    filterJobbermanJobsByPolicy(jobs, { remoteOnly: true, excludeTitleKeywords: ['senior', 'devops'] }).map((job) => job.title),
+    ['JavaScript Developer']
+  );
+});
+
+test('jobberman policy enforces configured required title keywords', () => {
+  const jobs = [
+    { title: 'JavaScript Developer', location: 'Remote (NG)', postedAt: new Date().toISOString(), raw: { jobLocationType: 'TELECOMMUTE' } },
+    { title: 'Forex Trading Assistant', location: 'Remote (NG)', postedAt: new Date().toISOString(), raw: { jobLocationType: 'TELECOMMUTE' } }
+  ];
+
+  assert.deepEqual(
+    filterJobbermanJobsByPolicy(jobs, { remoteOnly: true, requireTitleKeywords: ['developer'] }).map((job) => job.title),
+    ['JavaScript Developer']
   );
 });
 
@@ -384,6 +632,213 @@ test('greenhouse scraper normalizes board API jobs and filters profile keywords'
   assert.equal(jobs[0].company, 'Acme');
   assert.equal(jobs[0].applicationUrl, 'https://boards.greenhouse.io/acme/jobs/101');
   assert.match(jobs[0].description, /Zendesk/);
+});
+
+test('weworkremotely parser discovers listing links and apply handoff', () => {
+  const links = parseWeWorkRemotelyLinks(`
+    <rss><channel><item>
+      <title>Acme: Customer Support Specialist</title>
+      <link>https://weworkremotely.com/remote-jobs/acme-customer-support-specialist</link>
+      <region>Anywhere</region>
+      <type>Full-Time</type>
+      <category>Customer Support</category>
+      <description><![CDATA[<p>Remote support role.</p>]]></description>
+      <pubDate>Tue, 09 Jun 2026 00:00:00 +0000</pubDate>
+    </item></channel></rss>
+  `, 'https://weworkremotely.com/remote-jobs.rss');
+
+  assert.equal(links.length, 1);
+  assert.equal(links[0].jobUrl, 'https://weworkremotely.com/remote-jobs/acme-customer-support-specialist');
+
+  const detail = parseWeWorkRemotelyJobDetail(`
+    <html>
+      <head>
+        <title>Customer Support Specialist | We Work Remotely</title>
+        <meta name="description" content="Remote support role. Responsibilities: Help customers. Requirements: Zendesk and empathy.">
+      </head>
+      <body>
+        <time datetime="2026-06-09T00:00:00Z"></time>
+        <div>Location</div><div>Anywhere</div>
+        <a href="https://boards.greenhouse.io/acme/jobs/123">Apply for this job</a>
+      </body>
+    </html>
+  `, links[0]);
+
+  assert.equal(detail.title, 'Customer Support Specialist');
+  assert.equal(detail.location, 'Anywhere');
+  assert.equal(detail.applicationUrl, 'https://boards.greenhouse.io/acme/jobs/123');
+  assert.match(detail.requirements, /Requirements/i);
+});
+
+test('jobicy scraper keeps recent remote support roles and rejects old ones', async () => {
+  class FakeJobicyScraper extends JobicyScraper {
+    async fetchJobs() {
+      return [
+        {
+          id: 1,
+          jobTitle: 'Customer Support Specialist',
+          companyName: 'Acme',
+          jobGeo: 'Anywhere',
+          jobDescription: '<p>Remote support via Zendesk.</p>',
+          jobIndustry: ['Support'],
+          url: 'https://jobicy.com/jobs/1',
+          pubDate: new Date().toISOString()
+        },
+        {
+          id: 2,
+          jobTitle: 'Old Support Specialist',
+          companyName: 'Acme',
+          jobGeo: 'Anywhere',
+          jobDescription: '<p>Remote support.</p>',
+          jobIndustry: ['Support'],
+          url: 'https://jobicy.com/jobs/2',
+          pubDate: '2026-01-01T00:00:00Z'
+        }
+      ];
+    }
+  }
+
+  const jobs = await new FakeJobicyScraper({ maxJobsPerRun: 10 }, { maxAgeDays: 14, remoteOnly: true }).scrape();
+  assert.deepEqual(jobs.map((job) => job.title), ['Customer Support Specialist']);
+});
+
+test('themuse scraper normalizes remote results and respects title filters', async () => {
+  class FakeTheMuseScraper extends TheMuseScraper {
+    async fetchJobs() {
+      return [
+        {
+          id: 1,
+          name: 'Remote Customer Service Representative',
+          company: { name: 'Liberty Mutual' },
+          locations: [{ name: 'Remote' }],
+          categories: [{ name: 'Customer Service' }],
+          levels: [{ name: 'Entry Level' }],
+          refs: { landing_page: 'https://boards.greenhouse.io/acme/jobs/321' },
+          contents: '<p>Support customers using CRM and email.</p>',
+          publication_date: new Date().toISOString()
+        },
+        {
+          id: 2,
+          name: 'Senior Backend Engineer',
+          company: { name: 'Acme' },
+          locations: [{ name: 'Remote' }],
+          categories: [{ name: 'Engineering' }],
+          refs: { landing_page: 'https://jobs.lever.co/acme/222' },
+          contents: '<p>Build APIs.</p>',
+          publication_date: new Date().toISOString()
+        }
+      ];
+    }
+  }
+
+  const jobs = await new FakeTheMuseScraper({ maxJobsPerRun: 10 }, {
+    maxAgeDays: 14,
+    remoteOnly: true,
+    includeTitleKeywords: ['customer', 'support', 'service']
+  }).scrape();
+
+  assert.equal(jobs.length, 1);
+  assert.equal(jobs[0].applicationUrl, 'https://boards.greenhouse.io/acme/jobs/321');
+});
+
+test('arbeitnow scraper respects remote-only policy', async () => {
+  class FakeArbeitnowScraper extends ArbeitnowScraper {
+    async fetchJobs() {
+      return [
+        {
+          slug: 'support-1',
+          company_name: 'Acme',
+          title: 'Customer Support Associate',
+          description: '<p>Work from home support role.</p>',
+          remote: true,
+          url: 'https://www.arbeitnow.com/jobs/support-1',
+          tags: ['Support'],
+          job_types: ['Full Time'],
+          location: 'Remote',
+          created_at: new Date().toISOString()
+        },
+        {
+          slug: 'onsite-1',
+          company_name: 'Acme',
+          title: 'Office Manager',
+          description: '<p>Onsite Berlin role.</p>',
+          remote: false,
+          url: 'https://www.arbeitnow.com/jobs/onsite-1',
+          tags: ['Operations'],
+          job_types: ['Full Time'],
+          location: 'Berlin',
+          created_at: new Date().toISOString()
+        }
+      ];
+    }
+  }
+
+  const jobs = await new FakeArbeitnowScraper({ maxJobsPerRun: 10 }, { maxAgeDays: 14, remoteOnly: true }).scrape();
+  assert.deepEqual(jobs.map((job) => job.title), ['Customer Support Associate']);
+});
+
+test('realworkfromanywhere scraper parses rss items and keeps apply url when no handoff exists', async () => {
+  class FakeRealWorkFromAnywhereScraper extends RealWorkFromAnywhereScraper {
+    async fetchJobs() {
+      return [
+        {
+          title: 'Customer Support Agent at Acme',
+          link: 'https://www.realworkfromanywhere.com/remote-support-acme',
+          guid: 'acme-1',
+          description: '<p>Fully remote support role. Responsibilities: help customers. Requirements: empathy.</p>',
+          pubDate: new Date().toISOString(),
+          category: ['Support']
+        }
+      ];
+    }
+  }
+
+  const jobs = await new FakeRealWorkFromAnywhereScraper({ maxJobsPerRun: 10 }, { maxAgeDays: 14, remoteOnly: true }).scrape();
+  assert.equal(jobs.length, 1);
+  assert.equal(jobs[0].company, 'Acme');
+  assert.equal(jobs[0].applicationUrl, 'https://www.realworkfromanywhere.com/remote-support-acme');
+});
+
+test('workingnomads scraper filters old and non-remote-looking jobs', async () => {
+  class FakeWorkingNomadsScraper extends WorkingNomadsScraper {
+    async fetchJobs() {
+      return [
+        {
+          id: 1,
+          title: 'Customer Success Manager',
+          company: 'Acme',
+          location: 'Remote worldwide',
+          description: '<p>Support customers.</p>',
+          category_name: 'Customer Success',
+          url: 'https://www.workingnomads.com/jobs/customer-success-manager-acme',
+          pub_date: new Date().toISOString()
+        },
+        {
+          id: 2,
+          title: 'Office Coordinator',
+          company: 'Acme',
+          location: 'Berlin',
+          description: '<p>In-office role.</p>',
+          category_name: 'Administration',
+          url: 'https://www.workingnomads.com/jobs/office-coordinator-acme',
+          pub_date: new Date().toISOString()
+        },
+        {
+          id: 3,
+          title: 'Old Customer Success Manager',
+          company: 'Acme',
+          location: 'Remote worldwide',
+          description: '<p>Support customers.</p>',
+          category_name: 'Customer Success',
+          url: 'https://www.workingnomads.com/jobs/old-customer-success-manager-acme',
+          pub_date: '2026-01-01T00:00:00Z'
+        }
+      ];
+    }
+  }
+
+  const jobs = await new FakeWorkingNomadsScraper({ maxJobsPerRun: 10 }, { maxAgeDays: 14, remoteOnly: true }).scrape();
+  assert.deepEqual(jobs.map((job) => job.title), ['Customer Success Manager']);
 });
 
 test('remoteok resolver only allows audited downstream adapters', () => {

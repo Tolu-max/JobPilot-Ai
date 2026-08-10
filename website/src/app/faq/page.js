@@ -1,75 +1,82 @@
 import Link from 'next/link';
-import { HelpCircle, LockKeyhole, MonitorCog, Send } from 'lucide-react';
 
-export const metadata = { title: 'FAQ | JobPilot' };
+export const metadata = { title: 'FAQ · JobPilot' };
 
 const faqs = [
   {
-    question: 'Does JobPilot apply to jobs without review?',
-    answer: 'The safer default is review-first. A role can be scraped and scored automatically, but live submit should only happen after the source and application flow are audited and the profile allows it.',
+    q: 'Will it auto-apply to jobs without me looking?',
+    a: 'Not by default. Review-first is on out of the box: roles get scraped, scored, and queued, but nothing is submitted until you approve from Telegram or the dashboard. You can opt into auto-apply per source for trusted boards once you trust them — that flag is off until you set it.',
   },
   {
-    question: 'Can the web app store my AI, CAPTCHA, or job-board keys?',
-    answer: 'The recommended open-source setup is no. Keep AI provider keys, CAPTCHA solver keys, job-board passwords, resumes, cookies, and browser profiles on the local runner.',
+    q: 'Does the web app store my resume, AI keys, or job-board passwords?',
+    a: 'No. The web only ever sees job metadata: title, company, source, score, status, URL, timestamps, and a profile label. Resumes, AI keys, CAPTCHA solver keys, browser cookies, and job-board logins live exclusively on the laptop running the CLI. The dashboard literally has no API to receive them.',
   },
   {
-    question: 'Can I run this on a server or worker?',
-    answer: 'Yes, as long as you control the worker and can run browser automation there. Use the CLI scheduler on a trusted machine, VPS, or automation host. The hosted dashboard should only sync safe metadata and approvals.',
+    q: 'Can I run this on a server, not my laptop?',
+    a: 'Yes. The runner is the same Node image whether it lives on your laptop, a Railway service, a Fly machine, or a VPS. As long as you control the host and can mount a persistent volume for state, it works. You stay the only person with the keys — the dashboard does not get a backdoor to your worker.',
   },
   {
-    question: 'How does Telegram work?',
-    answer: 'Each user creates their own Telegram bot with BotFather. The CLI validates the token, discovers the chat, and saves the token locally. The hosted dashboard does not need the Telegram token.',
+    q: 'How does the CLI ↔ web auth handoff work?',
+    a: 'You run jobpilot login. The CLI spins up a localhost loopback on a random high port, opens your browser to /login on the dashboard, you sign in with GitHub or Google, the dashboard hands the session token back to your loopback, and the CLI stores it under ~/.jobpilot/. You never paste a token. The token is scoped to dashboard sync only and you can revoke it from the dashboard at any time.',
   },
   {
-    question: 'What happens when a company redirects to an ATS?',
-    answer: 'Audited flows can be automated. Unknown or risky application systems should route to manual review until the resolver and form handler are tested.',
+    q: 'What happens when a company posts on an ATS JobPilot doesn’t know yet?',
+    a: 'It goes to the review queue with the apply URL and the scraped metadata. Nothing auto-submits. You can apply by hand, and if it’s a popular enough ATS, open a ticket — adapter PRs are small and reviewed quickly.',
   },
   {
-    question: 'Can contributors add more job platforms?',
-    answer: 'Yes. New sources should include scraper tests, recency checks, duplicate handling, and an apply-flow audit before live submission is enabled.',
+    q: 'Do I need an AI key to use this?',
+    a: 'No. The local matcher (keyword + skill weighting) handles most decisions without any AI call at all. AI is a tiebreaker for the close ones — useful, not required. A search using only the local matcher costs nothing and runs offline.',
+  },
+  {
+    q: 'How do I add a new job board?',
+    a: 'Drop a file under src/scrapers/, export a scrape() function returning normalized jobs, and add the source to config/sites.json. Around 150 lines plus a fixture test. The contributor docs walk through it with a real example.',
+  },
+  {
+    q: 'What about CAPTCHA?',
+    a: 'If a job board throws a CAPTCHA and you have a CapSolver key, JobPilot solves it. No key, no bypass — the job routes to manual review with a screenshot of where it stopped. We don’t ship a default CAPTCHA solver.',
+  },
+  {
+    q: 'How do duplicates get handled?',
+    a: 'Hashing on normalized title + company + URL stem, scoped across all profiles on your install. The same role being on Greenhouse, Lever, and RemoteOK only pings you once. Status updates (e.g. applied) propagate across the duplicates so you can’t accidentally double-apply.',
+  },
+  {
+    q: 'Is this affiliated with any AI company?',
+    a: 'No. JobPilot is MIT-licensed open source, with no corporate sponsor and no commercial agreement with any AI provider. The "AI" in the name (when it appears) refers to the optional AI scoring step — replaceable with any provider you have a key for, or with no provider at all.',
   },
 ];
 
 export default function FAQPage() {
   return (
     <div className="container section">
-      <div className="page-header" style={{ maxWidth: '760px' }}>
-        <span className="page-eyebrow"><HelpCircle size={15} /> FAQ</span>
-        <h1 className="heading-lg">Practical answers for running JobPilot safely.</h1>
+      <div className="page-header" style={{ maxWidth: 780 }}>
+        <span className="page-eyebrow">faq</span>
+        <h1 className="heading-lg">Real questions, plainly answered.</h1>
         <p className="text-body">
-          Job automation touches private accounts and real applications, so the product needs clear boundaries.
+          These are the questions that come up most often when someone first looks at JobPilot. If yours isn&apos;t here, open an issue — the docs grow from real confusion.
         </p>
       </div>
 
-      <div style={{ display: 'grid', gap: '14px' }}>
+      <div className="faq-list">
         {faqs.map((faq) => (
-          <section key={faq.question} className="panel">
-            <h2 className="heading-sm" style={{ marginBottom: 8 }}>{faq.question}</h2>
-            <p className="muted" style={{ lineHeight: 1.7 }}>{faq.answer}</p>
-          </section>
+          <article key={faq.q} className="faq-item">
+            <div className="faq-item-q">{faq.q}</div>
+            <p className="faq-item-a">{faq.a}</p>
+          </article>
         ))}
       </div>
 
-      <section className="grid-3" style={{ marginTop: '34px' }}>
-        {[
-          { icon: LockKeyhole, title: 'Secret storage', body: 'Keep provider keys, resumes, cookies, and account credentials on the local runner.' },
-          { icon: MonitorCog, title: 'Apply runner', body: 'Run Playwright automation from your own computer, VPS, or private worker.' },
-          { icon: Send, title: 'Review alerts', body: 'Use Telegram to approve, skip, and inspect queued roles before submit.' },
-        ].map((item) => {
-          const Icon = item.icon;
-          return (
-            <article key={item.title} className="card">
-              <Icon size={22} style={{ color: 'var(--accent-light)', marginBottom: 12 }} />
-              <h3 className="heading-sm" style={{ marginBottom: 8 }}>{item.title}</h3>
-              <p className="muted">{item.body}</p>
-            </article>
-          );
-        })}
-      </section>
-
-      <div style={{ display: 'flex', gap: '10px', marginTop: '28px', flexWrap: 'wrap' }}>
-        <Link href="/docs" className="button button-primary">Read Documentation</Link>
-        <Link href="/features" className="button">View Features</Link>
+      <div className="cta-strip" style={{ marginTop: 48 }}>
+        <div>
+          <div className="kicker" style={{ marginBottom: 10 }}>didn&apos;t answer it?</div>
+          <h2 className="heading-md" style={{ marginBottom: 8 }}>The docs go deeper, the issues tracker is honest.</h2>
+          <p className="muted" style={{ maxWidth: 540 }}>
+            Every closed issue stays public. You can see what people asked and exactly how it got solved.
+          </p>
+        </div>
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+          <Link href="/docs" className="button button-primary">Read the docs</Link>
+          <Link href="https://github.com/Tolu-max/JobPilot-Ai/issues" target="_blank" rel="noopener noreferrer" className="button">Open an issue</Link>
+        </div>
       </div>
     </div>
   );

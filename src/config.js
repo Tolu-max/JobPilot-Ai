@@ -83,6 +83,10 @@ export function buildConfig(argv = process.argv) {
     platformScrapeMode: normalizePlatformScrapeMode(process.env.TEST_PLATFORM_SCRAPE_MODE || 'mock'),
     aiMode,
     aiProvider: normalizeAiProvider(process.env.AI_PROVIDER || process.env.AI_LAYER || 'deepseek'),
+    aiConsiderationFloor: readNumber(
+      process.env[`${envPrefix}_AI_CONSIDERATION_FLOOR`] || process.env.AI_CONSIDERATION_FLOOR,
+      40
+    ),
     aiDisabledProviders: process.env.AI_DISABLED_PROVIDERS || process.env.DISABLED_AI_PROVIDERS || '',
     geminiApiKey: process.env.GEMINI_API_KEY || '',
     geminiModel: process.env.GEMINI_MODEL || 'gemini-2.5-flash-lite',
@@ -158,6 +162,7 @@ export function buildConfig(argv = process.argv) {
       process.env[`${envPrefix}_MAX_AUTO_APPLY_PER_RUN`] || process.env.MAX_AUTO_APPLY_PER_RUN,
       preferences.maxAutoApplyPerRun ?? 1
     ),
+    autoApplyPerSiteLimit: preferences.autoApplyPerSiteLimit || {},
     applicationReviewScoreFloor: readNumber(
       process.env[`${envPrefix}_APPLICATION_REVIEW_SCORE_FLOOR`] || process.env.APPLICATION_REVIEW_SCORE_FLOOR,
       preferences.applicationReviewScoreFloor ?? 70

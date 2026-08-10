@@ -2,7 +2,7 @@
   "bruntwork": {
     "enabled": true,
     "priority": 10,
-    "maxJobsPerRun": 50,
+    "maxJobsPerRun": 100,
     "cooldownMinutes": 1,
     "autoApplyEnabled": true,
     "timeoutMs": 1800000,
@@ -59,30 +59,35 @@
     "autoApplyEnabled": false,
     "timeoutMs": 120000,
     "maxAgeDays": 14,
-    "_note": "Public Greenhouse Job Board API scraper. Configure boards per profile."
+    "_note": "Public Greenhouse Job Board API scraper. Configure boards per profile. Scrape-only by default until adapter custom-question handling is hardened."
   },
   "weworkremotely": {
     "enabled": false,
     "priority": 30,
     "maxJobsPerRun": 25,
     "cooldownMinutes": 1,
-    "autoApplyEnabled": false,
-    "_disabled_reason": "Planned scraper; not implemented yet"
+    "autoApplyEnabled": true,
+    "maxAgeDays": 14,
+    "remoteOnly": true,
+    "jobsUrl": "https://weworkremotely.com/remote-job-rss-feed"
   },
   "remoteok": {
-    "enabled": true,
+    "enabled": false,
     "priority": 40,
     "maxJobsPerRun": 50,
     "cooldownMinutes": 1,
-    "autoApplyEnabled": true
+    "autoApplyEnabled": false,
+    "_disabled_reason": "Apply flow redirects to remoteok.com/sign-up wall; adapter cannot resolve an outbound apply destination. Queued jobs retried forever and burned scheduler cycles."
   },
   "workingnomads": {
     "enabled": false,
     "priority": 50,
     "maxJobsPerRun": 15,
     "cooldownMinutes": 1,
-    "autoApplyEnabled": false,
-    "_disabled_reason": "Planned scraper; not implemented yet"
+    "autoApplyEnabled": true,
+    "maxAgeDays": 14,
+    "remoteOnly": true,
+    "apiUrl": "https://www.workingnomads.com/jobsapi/_search"
   },
   "remoteco": {
     "enabled": false,
@@ -95,17 +100,18 @@
   "dailyremote": {
     "enabled": false,
     "priority": 70,
-    "maxJobsPerRun": 20,
+    "maxJobsPerRun": 15,
     "cooldownMinutes": 1,
     "autoApplyEnabled": false,
-    "_disabled_reason": "Planned scraper; not implemented yet"
+    "maxAgeDays": 14,
+    "_disabled_reason": "Planned scraper; listing pages work but public detail pages do not expose a reliable outbound apply URL without premium prompts"
   },
   "remotive": {
-    "enabled": true,
+    "enabled": false,
     "priority": 80,
     "maxJobsPerRun": 50,
     "cooldownMinutes": 1,
-    "autoApplyEnabled": true
+    "autoApplyEnabled": false
   },
   "jobgether": {
     "enabled": false,
@@ -152,7 +158,11 @@
     "priority": 140,
     "maxJobsPerRun": 50,
     "cooldownMinutes": 1,
-    "autoApplyEnabled": true
+    "autoApplyEnabled": false,
+    "jobsUrl": "https://www.jobberman.com/jobs/remote",
+    "remoteOnly": true,
+    "maxAgeDays": 30,
+    "_note": "Second supported source after BruntWork. Scrape/review first; live apply requires a logged-in Jobberman jobseeker session."
   },
   "myjobmag": {
     "enabled": false,
@@ -175,7 +185,9 @@
     "maxJobsPerRun": 20,
     "cooldownMinutes": 1,
     "autoApplyEnabled": false,
-    "_disabled_reason": "Planned scraper; not implemented yet"
+    "maxAgeDays": 14,
+    "remoteOnly": true,
+    "apiUrl": "https://www.arbeitnow.com/api/job-board-api"
   },
   "themuse": {
     "enabled": false,
@@ -183,15 +195,20 @@
     "maxJobsPerRun": 20,
     "cooldownMinutes": 1,
     "autoApplyEnabled": false,
-    "_disabled_reason": "Planned scraper; not implemented yet"
+    "maxAgeDays": 14,
+    "remoteOnly": true,
+    "location": "Remote",
+    "categories": ["Customer Service", "Administrative"]
   },
   "jobicy": {
     "enabled": false,
     "priority": 190,
-    "maxJobsPerRun": 20,
+    "maxJobsPerRun": 25,
     "cooldownMinutes": 1,
     "autoApplyEnabled": false,
-    "_disabled_reason": "Planned scraper; not implemented yet"
+    "maxAgeDays": 14,
+    "remoteOnly": true,
+    "apiUrl": "https://jobicy.com/api/v2/remote-jobs"
   },
   "careernest": {
     "enabled": false,
@@ -210,11 +227,11 @@
     "_disabled_reason": "Apply flow opens new tab to login page (remoteyeah.com/login?redirect_url=...) — site requires authenticated session to apply"
   },
   "remotejobsorg": {
-    "enabled": true,
+    "enabled": false,
     "priority": 220,
     "maxJobsPerRun": 50,
     "cooldownMinutes": 1,
-    "autoApplyEnabled": true
+    "autoApplyEnabled": false
   },
   "jobdataapi": {
     "enabled": false,
@@ -222,6 +239,19 @@
     "maxJobsPerRun": 20,
     "cooldownMinutes": 1,
     "autoApplyEnabled": true
+  },
+  "realworkfromanywhere": {
+    "enabled": false,
+    "priority": 235,
+    "maxJobsPerRun": 20,
+    "cooldownMinutes": 1,
+    "autoApplyEnabled": true,
+    "maxAgeDays": 14,
+    "remoteOnly": true,
+    "feeds": [
+      "https://www.realworkfromanywhere.com/rss.xml",
+      "https://www.realworkfromanywhere.com/remote-customer-support-jobs/rss.xml"
+    ]
   },
   "ashby": {
     "enabled": false,

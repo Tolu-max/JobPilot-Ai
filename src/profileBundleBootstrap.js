@@ -48,13 +48,13 @@ function isRailwayLikeRuntime(rootDir) {
 }
 
 function ensureVolumeDirs(dataDir) {
-  for (const name of ['profiles', 'logs', 'review', 'debug', 'browser-profiles', 'test-results']) {
+  for (const name of runtimeVolumeDirs()) {
     fs.mkdirSync(path.join(dataDir, name), { recursive: true });
   }
 }
 
 function linkVolumeDirs(rootDir, dataDir, logger) {
-  for (const name of ['profiles', 'logs', 'review', 'debug', 'browser-profiles', 'test-results']) {
+  for (const name of runtimeVolumeDirs()) {
     const source = path.join(rootDir, name);
     const target = path.join(dataDir, name);
 
@@ -74,6 +74,10 @@ function linkVolumeDirs(rootDir, dataDir, logger) {
     fs.symlinkSync(target, source, 'dir');
     logger.log(`[bootstrap] Linked ${source} -> ${target}`);
   }
+}
+
+function runtimeVolumeDirs() {
+  return ['profiles', 'logs', 'review', 'debug', 'events', 'browser-profiles', 'test-results'];
 }
 
 function copyExampleProfile(source, target) {

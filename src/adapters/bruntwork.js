@@ -34,7 +34,9 @@ import {
 } from '../applicationAnswerGuard.js';
 
 const NAME = 'bruntwork';
-const SUCCESS_TEXT_PATTERN = /your application has been submitted|application (was )?successfully submitted|thank you for your application|we (have|'ve|ve) received your application|application is complete|enhance your application|our team is reviewing your profile|strengthen your application/i;
+// The "Enhance your application" page is still an editable portal step, not
+// proof that the final Submit Application action succeeded.
+const SUCCESS_TEXT_PATTERN = /your application has been submitted|application (was )?successfully submitted|thank you for your application|we(?: have|'ve|ve) received your application|application is complete|already (submitted|applied)|you have already submitted/i;
 
 function matches(url) {
   if (!url) return false;
@@ -546,6 +548,10 @@ async function clickSubmitApplication(page, ctx) {
       }
     }
     const requiredIssues = await collectVisibleRequiredIssues(page);
+    if (requiredIssues.length === 0) {
+      const formState = await collectVisibleFormState(page);
+      console.log(`[bruntwork] Submit disabled diagnostics: ${JSON.stringify(formState).slice(0, 4000)}`);
+    }
     return {
       step: FormStep.DETAILS,
       advanced: false,
@@ -578,6 +584,31 @@ async function clickSubmitApplication(page, ctx) {
     advanced: false,
     reason: 'No SUBMITTED markers seen yet — CAPTCHA or async submit may still be in flight.'
   };
+}
+
+async function collectVisibleFormState(page) {
+  return page.evaluate(() => {
+    const visible = (el) => {
+      const rect = el.getBoundingClientRect();
+      const style = window.getComputedStyle(el);
+      return rect.width > 0 && rect.height > 0 && style.visibility !== 'hidden' && style.display !== 'none';
+    };
+    const text = (el) => (el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 180);
+    return Array.from(document.querySelectorAll('input, textarea, select, button, [role="combobox"], [role="radiogroup"]'))
+      .filter(visible)
+      .map((el) => ({
+        tag: el.tagName.toLowerCase(),
+        type: el.getAttribute('type') || '',
+        name: el.getAttribute('name') || '',
+        id: el.getAttribute('id') || '',
+        required: Boolean(el.required) || /required/i.test(text(el.closest('label, [role="group"], .field, .form-group, div') || el)),
+        disabled: Boolean(el.disabled) || el.getAttribute('aria-disabled') === 'true',
+        invalid: el.getAttribute('aria-invalid') === 'true',
+        value: el.value || el.getAttribute('aria-valuetext') || '',
+        label: text(el.closest('label, [role="group"], .field, .form-group, div') || el)
+      }))
+      .slice(-60);
+  }).catch(() => []);
 }
 
 async function collectVisibleRequiredIssues(page) {
@@ -775,11 +806,8 @@ async function verifySubmission(ctx, options = {}) {
     const body = await page.locator('body').innerText({ timeout: 3000 }).catch(() => '');
 
     // Strong CONFIRMED markers: BruntWork tells us we've already applied / submitted
-    if (/already (submitted|applied)|application (was )?successfully submitted|we (have|'ve|ve) received your application|thank you for your application|you have already submitted|enhance your application|our team is reviewing your profile|strengthen your application/i.test(body)) {
+    if (/already (submitted|applied)|application (was )?successfully submitted|thank you for your application|we(?: have|'ve|ve) received your application|you have already submitted|our team is reviewing your profile/i.test(body)) {
       return { proof: Proof.CONFIRMED, markers: ['re-verify body matched already-submitted phrase'], reason: '' };
-    }
-    if (/\/applications\/[^/]+\/enhance(?:[/?#]|$)/i.test(afterUrl)) {
-      return { proof: Proof.CONFIRMED, markers: [`re-verify landed on enhance route: ${afterUrl}`], reason: '' };
     }
 
     // Strong NOT_SUBMITTED markers: BruntWork dropped us back into the apply form

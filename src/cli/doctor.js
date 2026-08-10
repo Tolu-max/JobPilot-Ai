@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { execSync } from 'node:child_process';
+import { resolveStoredProfilePath } from '../config.js';
 import { listProfiles } from '../dataStore.js';
 import { readResumeText } from '../profileParser.js';
 import { printBox, printHint, printInfo, printSectionHeader, printSuccess, printTable, printWarn, c } from './banner.js';
@@ -80,7 +81,8 @@ export async function inspectProfile(rootDir, profileName, {
   const reviewPath = path.join(profileDir, 'reviewQueue.json');
   const prefs = await readJson(prefsPath, null);
   const profileExists = await exists(profileDir);
-  const resumePath = resolveResumePath(profileDir, prefs?.resumePath || 'resume.pdf');
+  const storedResume = resolveStoredProfilePath(rootDir, profileDir, prefs?.resumePath || 'resume.pdf');
+  const resumePath = storedResume.absolutePath;
   const checks = [];
 
   checks.push(profileExists
@@ -98,6 +100,9 @@ export async function inspectProfile(rootDir, profileName, {
   if (prefs?.resumePlaceholder) {
     checks.push(warn('Resume', `Profile is using a placeholder resume. Set resumePath before auto-apply.`));
   } else {
+    if (!storedResume.isPortable) {
+      checks.push(warn('Resume path', `Uses machine-specific absolute path: ${storedResume.rawValue}`));
+    }
     const resumeExists = await exists(resumePath);
     if (!resumeExists) {
       checks.push(fail('Resume', `Missing ${path.relative(rootDir, resumePath)}`));
@@ -315,9 +320,4 @@ async function exists(filePath) {
   } catch {
     return false;
   }
-}
-
-function resolveResumePath(profileDir, resumePath) {
-  if (path.isAbsolute(resumePath)) return resumePath;
-  return path.resolve(profileDir, resumePath);
 }

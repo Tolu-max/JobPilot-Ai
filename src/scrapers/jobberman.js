@@ -32,7 +32,7 @@ export class JobbermanScraper extends BaseScraper {
       }
     }
 
-    const limit = this.resolveMaxJobsPerRun();
+    const limit = resolveJobbermanDetailScanLimit(this.siteConfig, this.resolveMaxJobsPerRun());
     const limitedLinks = limit > 0 ? links.slice(0, limit) : links;
     const jobs = [];
 
@@ -45,7 +45,8 @@ export class JobbermanScraper extends BaseScraper {
       }
     }
 
-    return filterJobbermanJobsByPolicy(jobs, this.siteConfig);
+    const filteredJobs = sortJobbermanJobsNewestFirst(filterJobbermanJobsByPolicy(jobs, this.siteConfig));
+    return jobsSinceLastSeen(filteredJobs, this.siteConfig.lastSeenJobUrl);
   }
 
   normalizeJob(rawJob) {
@@ -103,22 +104,33 @@ function dedupe(items) {
 export function parseJobbermanListingLinks(html, baseUrl = DEFAULT_JOBS_URL) {
   const links = [];
   const seen = new Set();
-  const re = /href=["']([^"']*\/listings\/[^"']+)["']/gi;
+  const re = /(?:href|content)=["']([^"']*\/listings\/[^"']+)["']/gi;
   let match;
 
   while ((match = re.exec(html || ''))) {
-    const jobUrl = new URL(match[1], baseUrl).toString();
+    const jobUrl = cleanJobbermanListingUrl(new URL(match[1], baseUrl).toString());
     if (seen.has(jobUrl)) continue;
     seen.add(jobUrl);
     links.push({
       jobUrl,
       applicationUrl: jobUrl,
+      boardUrl: baseUrl,
+      remoteBoard: isJobbermanRemoteBoard(baseUrl),
       source: 'jobberman',
       source_site: 'jobberman'
     });
   }
 
   return links;
+}
+
+function cleanJobbermanListingUrl(value) {
+  const url = new URL(value);
+  url.hash = '';
+  for (const key of [...url.searchParams.keys()]) {
+    if (/^(utm_|fbclid|gclid|mc_)/i.test(key)) url.searchParams.delete(key);
+  }
+  return url.toString();
 }
 
 export function parseJobbermanJobDetail(html, jobUrl, fallback = {}) {
@@ -134,7 +146,7 @@ export function parseJobbermanJobDetail(html, jobUrl, fallback = {}) {
     sourceJobId: sourceJobIdFromUrl(jobUrl, job['@id']),
     title: compactText(job.title || fallback.title),
     company: compactText(hiringOrg?.name || ''),
-    location: locationForJob(job),
+    location: locationForJob(job, fallback),
     jobType: compactText(job.employmentType || ''),
     salary,
     description,
@@ -145,8 +157,11 @@ export function parseJobbermanJobDetail(html, jobUrl, fallback = {}) {
     postedAt: compactText(job.datePosted || ''),
     raw: {
       jobUrl,
+      boardUrl: fallback.boardUrl || '',
+      remoteBoard: fallback.remoteBoard === true,
       directApply: job.directApply === true,
       validThrough: job.validThrough || '',
+      jobLocationType: job.jobLocationType || '',
       occupationalCategory: job.occupationalCategory || '',
       applicantLocationRequirements: job.applicantLocationRequirements || null
     }
@@ -158,9 +173,24 @@ export function filterJobbermanJobsByPolicy(jobs, siteConfig = {}) {
   const cutoff = Number.isFinite(maxAgeDays) && maxAgeDays > 0
     ? Date.now() - maxAgeDays * 24 * 60 * 60 * 1000
     : null;
+  const titleExclusions = toUrlList(siteConfig.excludeTitleKeywords);
+  const urlExclusions = toUrlList(siteConfig.excludeUrlKeywords);
+  const titleRequirements = [
+    ...toUrlList(siteConfig.requireTitleKeywords),
+    ...toUrlList(siteConfig.includeTitleKeywords)
+  ];
 
   return jobs.filter((job) => {
-    if (siteConfig.remoteOnly === true && !/remote|work from home|telecommute/i.test(`${job.location} ${job.raw?.jobLocationType || ''}`)) {
+    const title = String(job.title || '').toLowerCase();
+    const url = String(job.applicationUrl || job.jobUrl || '').toLowerCase();
+    if (titleRequirements.length && !titleRequirements.some((keyword) => title.includes(keyword.toLowerCase()))) return false;
+    if (titleExclusions.some((keyword) => title.includes(keyword.toLowerCase()))) return false;
+    if (urlExclusions.some((keyword) => url.includes(keyword.toLowerCase()))) return false;
+    if (
+      siteConfig.remoteOnly === true &&
+      job.raw?.remoteBoard !== true &&
+      !/remote|work from home|telecommute/i.test(`${job.location} ${job.raw?.jobLocationType || ''}`)
+    ) {
       return false;
     }
     if (cutoff) {
@@ -169,6 +199,37 @@ export function filterJobbermanJobsByPolicy(jobs, siteConfig = {}) {
     }
     return true;
   });
+}
+
+export function sortJobbermanJobsNewestFirst(jobs = []) {
+  return [...jobs].sort((left, right) => {
+    const leftTime = Date.parse(left.postedAt || '');
+    const rightTime = Date.parse(right.postedAt || '');
+    const leftRank = Number.isFinite(leftTime) ? leftTime : 0;
+    const rightRank = Number.isFinite(rightTime) ? rightTime : 0;
+    return rightRank - leftRank;
+  });
+}
+
+export function jobsSinceLastSeen(jobs = [], lastSeenJobUrl = '') {
+  const marker = String(lastSeenJobUrl || '').trim();
+  if (!marker) return jobs;
+  const markerIndex = jobs.findIndex((job) => String(job.applicationUrl || job.jobUrl || '') === marker);
+  return markerIndex >= 0 ? jobs.slice(0, markerIndex) : jobs;
+}
+
+export function resolveJobbermanDetailScanLimit(siteConfig = {}, maxJobsPerRun = 10) {
+  const explicit = Number.parseInt(siteConfig.detailScanLimit ?? siteConfig.recentScanLimit, 10);
+  if (Number.isFinite(explicit)) return explicit;
+
+  const runLimit = Number.parseInt(maxJobsPerRun, 10);
+  if (!Number.isFinite(runLimit) || runLimit <= 0) return 0;
+  return Math.max(runLimit, 25);
+}
+
+function isJobbermanRemoteBoard(value) {
+  const url = String(value || '').toLowerCase();
+  return /\/remote(?:[/?#]|$)/.test(url);
 }
 
 function readJsonLdGraph(html) {
@@ -200,8 +261,12 @@ function formatSalary(baseSalary) {
   return compactText([currency, max ? `${min}-${max}` : min, unit].filter(Boolean).join(' '));
 }
 
-function locationForJob(job) {
+function locationForJob(job, fallback = {}) {
   if (job.jobLocationType === 'TELECOMMUTE') {
+    const country = job.applicantLocationRequirements?.name;
+    return country ? `Remote (${country})` : 'Remote';
+  }
+  if (fallback.remoteBoard === true) {
     const country = job.applicantLocationRequirements?.name;
     return country ? `Remote (${country})` : 'Remote';
   }

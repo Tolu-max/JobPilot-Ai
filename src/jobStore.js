@@ -123,12 +123,19 @@ export async function upsertJobRecord(config, job, status, details = {}) {
     if (existingIndex >= 0) {
       const prev = store.jobs[existingIndex];
       const retryStates = ['failed', 'manual_review'];
-      const retryCount = retryStates.includes(prev.status) && retryStates.includes(status)
-        ? (prev.retryCount || 0) + 1
-        : (prev.retryCount || 0);
+      const requestedRetryCount = Number.parseInt(details.retryCount, 10);
+      const retryCount = Number.isFinite(requestedRetryCount) && requestedRetryCount >= 0
+        ? requestedRetryCount
+        : retryStates.includes(prev.status) && retryStates.includes(status)
+          ? (prev.retryCount || 0) + 1
+          : (prev.retryCount || 0);
       store.jobs[existingIndex] = { ...prev, ...record, retryCount };
     } else {
-      store.jobs.push({ ...record, retryCount: 0, createdAt: new Date().toISOString() });
+      const requestedRetryCount = Number.parseInt(details.retryCount, 10);
+      const retryCount = Number.isFinite(requestedRetryCount) && requestedRetryCount >= 0
+        ? requestedRetryCount
+        : 0;
+      store.jobs.push({ ...record, retryCount, createdAt: new Date().toISOString() });
     }
 
     await saveJobStore(config, store);
@@ -200,6 +207,7 @@ async function emitJobStatusChanged(config, record, action) {
 
 export function shouldSkipProcessed(record) {
   if (!record) return false;
+  if (record.terminal === true) return true;
   // Permanently skip jobs that reached a definitive terminal state.
   // 'reviewed' is included: once queued for Telegram action it must not be re-notified
   // until the user explicitly acts (Accept / Skip) or the record is reset.

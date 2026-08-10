@@ -4,6 +4,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 import { extractResumeIntelligence } from '../resumeIntelligence.js';
+import { resolveStoredProfilePath } from '../config.js';
 import { upsertEnvVars } from './envFile.js';
 import { scraperRegistry } from '../scrapers/index.js';
 
@@ -66,11 +67,12 @@ export async function interactiveInit(args = {}) {
   // 3. AI provider
   note('Step 2/8 — AI provider (used for matching & resume parsing)');
   const aiProvider = await askSelect('Which AI provider do you want to use?', [
+    { value: 'deepseek', label: 'DeepSeek', hint: 'bring your own API key' },
     { value: 'gemini', label: 'Gemini  (free tier, recommended)', hint: 'aistudio.google.com' },
     { value: 'openrouter', label: 'OpenRouter', hint: 'openrouter.ai' },
     { value: 'groq', label: 'Groq', hint: 'console.groq.com' },
     { value: 'none', label: 'Skip — local matching only', hint: 'works, but less accurate' }
-  ], 'gemini');
+  ], 'deepseek');
 
   let aiKey = '';
   if (aiProvider !== 'none') {
@@ -233,6 +235,7 @@ export async function interactiveInit(args = {}) {
   note('Step 8/8 — Writing config');
   s.start('Saving profile...');
   await fs.mkdir(profileDir, { recursive: true });
+  const storedResume = resolveStoredProfilePath(ROOT, profileDir, resumeAbs);
 
   const parsedRoles = splitCsv(targetRolesRaw);
   const parsedSkills = splitCsv(skillsRaw);
@@ -241,7 +244,7 @@ export async function interactiveInit(args = {}) {
   const preferences = {
     displayName,
     applicantEmail: email,
-    resumePath: resumeAbs,
+    resumePath: storedResume.storedValue,
     resumePlaceholder: false,
     careerBrainPrompt: '',
     enabledSites,
@@ -293,6 +296,7 @@ export async function interactiveInit(args = {}) {
 
   // 11. .env updates (append-only, never overwrite existing keys)
   const aiKeyEnvName = {
+    deepseek: 'DEEPSEEK_API_KEY',
     gemini: 'GEMINI_API_KEY',
     openrouter: 'OPENROUTER_API_KEY',
     groq: 'GROQ_API_KEY'
@@ -306,7 +310,7 @@ export async function interactiveInit(args = {}) {
     TELEGRAM_CHAT_ID: tgChat || undefined,
     // Per-profile overrides — only set ones the user customised
     [`${profileUpper}_APPLICANT_EMAIL`]: email,
-    [`${profileUpper}_RESUME_PATH`]: resumeAbs,
+    [`${profileUpper}_RESUME_PATH`]: storedResume.storedValue,
     [`${profileUpper}_AUTO_APPLY`]: String(autoApply),
     [`${profileUpper}_TEST_MODE`]: String(testMode),
     [`${profileUpper}_ALLOW_GATEWAY_AUTO_SUBMIT`]: String(allowGatewayAutoSubmit),

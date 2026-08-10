@@ -1,4 +1,5 @@
 import { FormStep, Proof, noProof, proofFound } from './types.js';
+import { buildGroundedFallbackAnswer, validateApplicationAnswer } from '../applicationAnswerGuard.js';
 
 const NAME = 'applytojob';
 
@@ -37,6 +38,7 @@ async function fillStep(page, step, ctx) {
   await fill(page, '#resumator-linkedin-value', defaults.linkedinProfileUrl || ctx.config?.linkedinProfileUrl || 'N/A');
   await fill(page, '#resumator-languages-value', defaults.languages || 'English');
   await fill(page, '#resumator-salary-value', defaults.desiredSalary || desiredSalary(ctx.job));
+  await fillQuestionnaireFields(page, ctx);
 }
 
 async function advance(page, step, ctx) {
@@ -45,6 +47,15 @@ async function advance(page, step, ctx) {
       step: FormStep.REVIEW,
       advanced: false,
       reason: 'NO_REAL_SUBMISSION/TEST_MODE: ApplyToJob form filled and stopped before Submit Application.'
+    };
+  }
+
+  const missingQuestions = await findMissingQuestionnaireFields(page);
+  if (missingQuestions.length > 0) {
+    return {
+      step: FormStep.REVIEW,
+      advanced: false,
+      reason: `ApplyToJob required questions still unanswered: ${missingQuestions.slice(0, 3).join('; ')}`
     };
   }
 
@@ -61,6 +72,81 @@ async function advance(page, step, ctx) {
   }
 
   return { step, advanced: false, reason: 'ApplyToJob Submit Application button was not visible.' };
+}
+
+async function fillQuestionnaireFields(page, ctx = {}) {
+  const fields = page.locator('[id^="resumator-questionnaire-"]');
+  const answers = ctx.answers || {};
+  const count = await fields.count().catch(() => 0);
+
+  for (let index = 0; index < count; index += 1) {
+    const field = fields.nth(index);
+    const meta = await field.evaluate((element) => {
+      const label = element.id ? document.querySelector(`label[for="${element.id}"]`) : null;
+      const group = element.closest('.form-group');
+      return {
+        id: element.id || '',
+        tag: element.tagName.toLowerCase(),
+        type: element.getAttribute('type') || '',
+        prompt: label?.innerText || group?.innerText || element.name || ''
+      };
+    }).catch(() => null);
+    if (!meta) continue;
+
+    const answer = answerForQuestion(meta, answers, ctx);
+    if (!answer) continue;
+    if (meta.tag === 'select') {
+      await field.selectOption({ label: answer }).catch(async () => field.selectOption({ value: answer }).catch(() => {}));
+    } else if (meta.type === 'checkbox' || meta.type === 'radio') {
+      if (/^(yes|true|on|1)$/i.test(answer)) await field.check().catch(() => {});
+    } else {
+      await field.fill(answer).catch(() => {});
+    }
+  }
+}
+
+async function findMissingQuestionnaireFields(page) {
+  const fields = page.locator('[id^="resumator-questionnaire-"]');
+  const missing = [];
+  const count = await fields.count().catch(() => 0);
+  for (let index = 0; index < count; index += 1) {
+    const field = fields.nth(index);
+    const meta = await field.evaluate((element) => {
+      const group = element.closest('.form-group');
+      const label = element.id ? document.querySelector(`label[for="${element.id}"]`) : null;
+      const required = Boolean(element.required || group?.querySelector('.asterisk'));
+      const value = element.value || (element.checked ? 'checked' : '');
+      return { required, value, prompt: label?.innerText || element.name || 'Question' };
+    }).catch(() => null);
+    if (meta?.required && !String(meta.value || '').trim()) {
+      missing.push(String(meta.prompt).replace(/\s+/g, ' ').trim());
+    }
+  }
+  return missing;
+}
+
+function answerForQuestion(meta, answers, ctx) {
+  const prompt = String(meta.prompt || '').toLowerCase();
+  const direct = answers[meta.id] || answers[meta.prompt] || '';
+  if (direct) return String(direct);
+
+  const entries = Object.entries(answers);
+  const matching = entries.find(([key]) => {
+    const normalized = String(key).toLowerCase().replace(/[^a-z0-9]+/g, ' ');
+    return normalized && prompt.includes(normalized);
+  });
+  if (matching?.[1]) return String(matching[1]);
+
+  const fallback = answers.general || answers.describe_experience || answers.relevant_skills || '';
+  if (!fallback || meta.tag === 'select' || meta.type === 'checkbox' || meta.type === 'radio') return '';
+  const grounded = validateApplicationAnswer({
+    question: meta.prompt,
+    answer: fallback,
+    config: ctx.config || {},
+    candidate: ctx.candidate || {},
+    fallback: buildGroundedFallbackAnswer(meta.prompt, answers, ctx.config || {}, ctx.candidate || {})
+  });
+  return grounded.ok ? grounded.answer : grounded.answer || '';
 }
 
 async function isSubmitted(page) {

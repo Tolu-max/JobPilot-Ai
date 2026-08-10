@@ -1,80 +1,149 @@
 import Link from 'next/link';
-import { CheckCircle, CircleDollarSign, KeyRound, Server, ShieldCheck } from 'lucide-react';
+import CommandBlock from '@/components/CommandBlock';
 
-export const metadata = { title: 'Pricing | JobPilot' };
+export const metadata = { title: 'Pricing · JobPilot' };
 
-const costBlocks = [
+const tiers = [
   {
-    icon: CircleDollarSign,
-    title: 'JobPilot CLI',
-    price: 'Free',
-    body: 'The open-source CLI and local automation runner are intended to be free to install, inspect, and self-host.',
-    points: ['Scraping pipeline', 'Local profile onboarding', 'Review queue sync', 'Local browser automation'],
+    name: 'CLI + Local',
+    badge: 'always free',
+    price: '$0',
+    sub: 'forever, no account required',
+    summary: 'The actual product. Install on your laptop, run as much as you want.',
+    points: [
+      'All 15+ scrapers',
+      'All ATS adapters (Greenhouse, Lever, Ashby, Workable, BambooHR…)',
+      'Local matcher (no AI key needed)',
+      'Telegram review bot',
+      'Multi-profile',
+      'Application history (local SQLite)',
+    ],
+    cta: { href: '/docs#install', label: 'Install →', primary: true },
   },
   {
-    icon: KeyRound,
-    title: 'AI and CAPTCHA providers',
-    price: 'Bring your keys',
-    body: 'Users pay providers directly. The hosted dashboard should not collect or store those keys.',
-    points: ['Gemini, OpenRouter, Groq, or local matching', 'Optional CAPTCHA solver keys', 'Per-user provider choice'],
+    name: 'Web Dashboard',
+    badge: 'free during beta',
+    price: '$0',
+    sub: 'limited free tier afterwards',
+    summary: 'Optional cloud sync for reviewing on your phone and seeing trends.',
+    points: [
+      'GitHub or Google sign-in',
+      'CLI device-code linking (no token paste)',
+      'Review queue, history, source health, runner controls',
+      'Multi-profile filtering',
+      'Approve / reject from any device',
+      'Only metadata syncs — never your resume or keys',
+    ],
+    cta: { href: '/login', label: 'Open dashboard', primary: false },
   },
   {
-    icon: Server,
-    title: 'Hosted dashboard',
-    price: 'Optional',
-    body: 'Use the dashboard for auth, approvals, analytics, and safe metadata. Run the worker on your own computer or trusted server.',
-    points: ['No hosted CV storage by default', 'No browser cookies', 'No job-board credentials'],
+    name: 'Managed Worker',
+    badge: 'design phase',
+    price: 'TBD',
+    sub: 'planned: pay for compute, not seats',
+    summary: 'For people who don’t want to babysit a Railway box. Same code, same boundary — your secrets encrypted with a key only you hold.',
+    points: [
+      'Hosted scheduler with persistent volume',
+      'Per-user encryption (zero-knowledge)',
+      'Pause / resume / migrate at any time',
+      'Self-host migration script (one command out)',
+      'Public alpha: later this year',
+    ],
+    cta: { href: '/about', label: 'Read the plan', primary: false },
   },
+];
+
+const provider = [
+  ['DeepSeek', '$0.10 – $1 / month for a normal search', 'recommended default — cheap and sharp'],
+  ['Gemini', 'free tier covers most users', 'fast, good free quota, occasional rate limits'],
+  ['OpenRouter', 'pay-as-you-go', 'use any model — Claude, GPT, Mistral, Llama'],
+  ['Groq', 'free tier generous', 'fastest tokens around, smaller free models'],
+  ['Local matcher only', '$0', 'no AI calls — works fine for keyword-driven roles'],
 ];
 
 export default function PricingPage() {
   return (
     <div className="container section">
-      <div className="page-header" style={{ maxWidth: '760px' }}>
-        <span className="page-eyebrow"><ShieldCheck size={15} /> Pricing</span>
-        <h1 className="heading-lg">Open source first, provider costs transparent.</h1>
+      <div className="page-header" style={{ maxWidth: 780 }}>
+        <span className="page-eyebrow">pricing</span>
+        <h1 className="heading-lg">The tool is free. The costs you pay are the ones you control.</h1>
         <p className="text-body">
-          JobPilot should not become expensive just because someone wants automation. The base project is open source; external AI, CAPTCHA, hosting, and worker costs are controlled by each user.
+          JobPilot is open source under MIT. The CLI doesn&apos;t talk to a paid backend. If you use AI scoring or CAPTCHA solving, you pay those providers directly — and we don&apos;t see the bill.
         </p>
       </div>
 
-      <div className="grid-3">
-        {costBlocks.map((block) => {
-          const Icon = block.icon;
-          return (
-            <article key={block.title} className="card" style={{ display: 'grid', gap: '16px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', gap: '12px', alignItems: 'flex-start' }}>
-                <div style={{ width: 42, height: 42, display: 'grid', placeItems: 'center', borderRadius: 8, background: 'rgba(79, 140, 255, 0.12)', color: 'var(--accent-light)' }}>
-                  <Icon size={21} />
-                </div>
-                <span className="badge badge-blue">{block.price}</span>
+      <div className="grid-3" style={{ marginBottom: 56 }}>
+        {tiers.map((tier) => (
+          <article key={tier.name} className="panel" style={{ display: 'grid', gap: 14, alignContent: 'start' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+              <span className={`badge ${tier.badge.includes('free') ? 'badge-green' : tier.badge.includes('beta') ? 'badge-blue' : 'badge-amber'}`}>
+                {tier.badge}
+              </span>
+            </div>
+            <div>
+              <h2 className="heading-md" style={{ marginBottom: 4 }}>{tier.name}</h2>
+              <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+                <span className="heading-lg amber-text" style={{ fontSize: '1.85rem' }}>{tier.price}</span>
+                <span className="dim" style={{ fontSize: '0.85rem' }}>{tier.sub}</span>
               </div>
-              <div>
-                <h2 className="heading-md" style={{ marginBottom: 8 }}>{block.title}</h2>
-                <p className="muted" style={{ lineHeight: 1.65 }}>{block.body}</p>
-              </div>
-              <div style={{ display: 'grid', gap: '9px' }}>
-                {block.points.map((point) => (
-                  <div key={point} style={{ display: 'flex', alignItems: 'center', gap: '9px' }}>
-                    <CheckCircle size={17} style={{ color: 'var(--green)' }} />
-                    <span className="muted">{point}</span>
-                  </div>
-                ))}
-              </div>
-            </article>
-          );
-        })}
+            </div>
+            <p className="muted" style={{ lineHeight: 1.6 }}>{tier.summary}</p>
+            <hr className="rule" />
+            <ul style={{ display: 'grid', gap: 8, listStyle: 'none' }}>
+              {tier.points.map((p) => (
+                <li key={p} style={{ display: 'flex', gap: 10, alignItems: 'flex-start', color: 'var(--paper-soft)', fontSize: '0.93rem', lineHeight: 1.55 }}>
+                  <span style={{ color: 'var(--amber)', fontWeight: 700 }}>·</span>
+                  <span>{p}</span>
+                </li>
+              ))}
+            </ul>
+            <Link href={tier.cta.href} className={`button ${tier.cta.primary ? 'button-primary' : ''}`} style={{ marginTop: 6, justifySelf: 'flex-start' }}>
+              {tier.cta.label}
+            </Link>
+          </article>
+        ))}
       </div>
 
-      <section className="panel" style={{ marginTop: '34px', display: 'grid', gridTemplateColumns: '1fr auto', gap: '18px', alignItems: 'center' }}>
+      <section style={{ marginBottom: 48 }}>
+        <div className="kicker" style={{ marginBottom: 14 }}>bring-your-own keys</div>
+        <h2 className="heading-md" style={{ marginBottom: 12, maxWidth: 700 }}>
+          AI providers: pick one. They&apos;re all wired up. Your keys never leave the laptop.
+        </h2>
+        <div className="table-wrap">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>provider</th>
+                <th>cost</th>
+                <th>notes</th>
+              </tr>
+            </thead>
+            <tbody>
+              {provider.map(([name, cost, note]) => (
+                <tr key={name}>
+                  <td style={{ color: 'var(--paper)', fontWeight: 600, fontFamily: 'IBM Plex Mono, monospace' }}>{name}</td>
+                  <td>{cost}</td>
+                  <td className="muted">{note}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <div className="cta-strip">
         <div>
-          <h2 className="heading-md" style={{ marginBottom: 8 }}>Recommended first-run setup</h2>
-          <p className="muted" style={{ lineHeight: 1.65 }}>
-            Start with local matching, dry-run mode, and review-first queues. Add an AI provider or CAPTCHA solver only after the profile filters and source list are behaving correctly.
+          <div className="kicker" style={{ marginBottom: 10 }}>recommended starting recipe</div>
+          <h2 className="heading-md" style={{ marginBottom: 8 }}>Local matcher + Telegram. Add a $5 DeepSeek key only if you want sharper scoring.</h2>
+          <p className="muted" style={{ maxWidth: 540 }}>
+            Most people never need more than this. The dashboard is icing — useful, free during beta, but the CLI alone is enough to run a real job search.
           </p>
         </div>
-        <Link href="/docs" className="button button-primary">Setup Guide</Link>
-      </section>
+        <div style={{ display: 'grid', gap: 8, minWidth: 280 }}>
+          <CommandBlock command="npm i -g jobpilot-cli" />
+          <CommandBlock command="jobpilot init --profile=me" />
+        </div>
+      </div>
     </div>
   );
 }
