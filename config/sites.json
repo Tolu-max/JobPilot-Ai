@@ -178,7 +178,7 @@
     "priority": 150,
     "maxJobsPerRun": 20,
     "cooldownMinutes": 1,
-    "autoApplyEnabled": false,
+    "autoApplyEnabled": true,
     "_disabled_reason": "Planned scraper; not implemented yet"
   },
   "betternship": {
