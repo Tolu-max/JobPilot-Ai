@@ -90,7 +90,7 @@
   "workingnomads": {
     "enabled": true,
     "priority": 50,
-    "maxJobsPerRun": 15,
+    "maxJobsPerRun": 40,
     "cooldownMinutes": 1,
     "autoApplyEnabled": true,
     "maxAgeDays": 14,
