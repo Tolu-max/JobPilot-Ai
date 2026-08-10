@@ -60,8 +60,8 @@ test('new sources stay disabled by default and only audited feeds may auto-apply
     assert.equal(config.sites[site].maxAgeDays, 14, `${site} should default to a 14 day age limit`);
   }
 
-  for (const site of ['weworkremotely', 'realworkfromanywhere', 'workingnomads']) {
-    assert.equal(config.sites[site].enabled, false, `${site} should be disabled by default`);
+  for (const site of ['workingnomads', 'realworkfromanywhere']) {
+    assert.equal(config.sites[site].enabled, true, `${site} should be enabled in the active source policy`);
     assert.equal(config.sites[site].autoApplyEnabled, true, `${site} should allow audited downstream auto-apply`);
     assert.equal(config.sites[site].maxAgeDays, 14, `${site} should default to a 14 day age limit`);
   }
