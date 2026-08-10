@@ -148,6 +148,7 @@ function uniqueCompact(...sources) {
 }
 
 function isToluProfile(profileName, profile = {}) {
+  if (profileName.includes('sister')) return false;
   if (profileName.includes('tolu') || profileName.includes('toluwalope')) return true;
   const skills = (profile.skills || []).join(' ').toLowerCase();
   const roles = (profile.preferredRoles || []).join(' ').toLowerCase();
@@ -156,6 +157,7 @@ function isToluProfile(profileName, profile = {}) {
 }
 
 function isSisterProfile(profileName, profile = {}) {
+  if (profileName.includes('tolu') || profileName.includes('toluwalope')) return false;
   if (profileName.includes('sister')) return true;
   const skills = (profile.skills || []).join(' ').toLowerCase();
   const roles = (profile.preferredRoles || []).join(' ').toLowerCase();

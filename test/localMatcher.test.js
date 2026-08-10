@@ -62,6 +62,20 @@ test('Sister admin and CRM titles receive transferable role credit', async () =>
   assert.ok(result.score >= 60);
 });
 
+test('explicit Sister profile name overrides overlapping e-commerce vocabulary', async () => {
+  const result = await localMatchJob({
+    title: 'Virtual Assistant',
+    description: 'Remote virtual assistant role handling CRM updates, customer follow-up, scheduling, and records.'
+  }, {
+    profileName: 'sister',
+    skills: ['Customer Operations', 'Virtual Assistance', 'E-commerce Operations'],
+    preferredRoles: ['Virtual Assistant', 'Customer Support Specialist']
+  }, { profileName: 'sister', preferences: {} });
+
+  assert.notEqual(result.score, 0);
+  assert.equal(/Tolu is limited/i.test(result.reasons.join(' ')), false);
+});
+
 test('first-pass matching is deterministic and does not require an AI provider', async () => {
   const result = await localMatchJob(
     {
