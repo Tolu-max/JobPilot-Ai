@@ -387,14 +387,6 @@ async function handleCallback(callbackQuery, config, allConfigs) {
       await answerCallback(config, callbackQuery.id, '✅ Queued for application!');
       await editMessageButtons(config, chatId, messageId, '✅ ACCEPTED - will apply next run');
       await appendLog('Telegram acceptance queued; waiting for the next scheduled run.', profileConfig);
-      try {
-        await flushPendingApplyQueue(profileConfig);
-        const updated = await findJobByHash(profileConfig, jobHash, allConfigs);
-        await sendTelegramApplicationResult(profileConfig, chatId, updated || record);
-      } catch (error) {
-        await sendTelegramMessage(profileConfig, chatId, `Application run failed: ${escapeMarkdown(error.message || 'unknown error')}\\.`);
-        await appendLog(`Telegram-approved application flush failed: ${error.stack || error.message}`, profileConfig);
-      }
     } else {
       await answerCallback(config, callbackQuery.id, '⚠️ Job not found in store');
     }
