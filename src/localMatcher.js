@@ -674,13 +674,21 @@ const titleRelevanceKeywords = [
 
 const sisterTransferableTitleKeywords = [
   'administrative assistant', 'admin assistant', 'office assistant',
+  'administrative coordinator', 'admin coordinator', 'office administrator',
   'virtual assistant', 'executive assistant', 'operations assistant',
   'operations coordinator', 'operations administrator', 'customer operations',
   'client operations', 'crm assistant', 'crm administrator', 'customer support',
-  'customer success', 'client support', 'appointment setter', 'appointment setting',
+  'customer success', 'customer success specialist', 'customer experience specialist',
+  'client support', 'client support specialist', 'client success specialist',
+  'appointment setter', 'appointment setting',
   'scheduling coordinator', 'booking coordinator', 'onboarding coordinator',
+  'onboarding specialist', 'implementation coordinator',
   'property assistant', 'airbnb assistant', 'order fulfillment', 'records coordinator',
-  'document coordinator', 'program coordinator', 'community coordinator'
+  'order management specialist', 'order processing specialist', 'billing support specialist',
+  'invoicing coordinator', 'document coordinator', 'records administrator',
+  'program coordinator', 'community coordinator', 'community support specialist',
+  'social media coordinator', 'social media assistant', 'sales support specialist',
+  'lead generation specialist'
 ];
 
 function scoreRoleMatch(title, text, profile) {

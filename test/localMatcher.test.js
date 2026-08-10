@@ -131,3 +131,24 @@ test('sister accepts transferable operations and bookkeeping-admin roles', async
   }, profile, { profileName: 'sister', preferences: {} });
   assert.notEqual(bookkeeping.score, 0);
 });
+
+test('sister accepts adjacent customer experience and onboarding titles', async () => {
+  const profile = {
+    profileName: 'sister',
+    skills: ['Customer Support', 'CRM', 'Administrative Support', 'Program Coordination'],
+    preferredRoles: ['Customer Support Specialist', 'Virtual Assistant'],
+    secondaryRoles: ['Community Manager']
+  };
+
+  const customerExperience = await localMatchJob({
+    title: 'Customer Experience Specialist',
+    description: 'Support customers, update CRM records, resolve requests, and coordinate follow-up.'
+  }, profile, { profileName: 'sister', preferences: {} });
+  const onboarding = await localMatchJob({
+    title: 'Client Onboarding Coordinator',
+    description: 'Coordinate onboarding steps, scheduling, records, and customer communication.'
+  }, profile, { profileName: 'sister', preferences: {} });
+
+  assert.notEqual(customerExperience.score, 0);
+  assert.notEqual(onboarding.score, 0);
+});
