@@ -111,6 +111,11 @@ if [ -n "${JOBPILOT_BRUNTWORK_TARGETED_URL:-}" ]; then
   node ./scripts/apply-bruntwork-targeted.mjs "${targeted_args[@]}"
 fi
 
+if [ -n "${JOBPILOT_REQUEUE_JOBBERMAN_ID:-}" ]; then
+  echo "[bootstrap] Requeuing accepted Jobberman reviews"
+  node ./scripts/ops/requeue-accepted-jobberman-once.mjs
+fi
+
 if [ -n "${JOBPILOT_BRUNTWORK_LIVE_RERUN_ID:-}" ]; then
   echo "[bootstrap] Running requested live BruntWork rerun: ${JOBPILOT_BRUNTWORK_LIVE_RERUN_ID}"
   node ./scripts/ops/run-bruntwork-live-rerun-once.mjs
