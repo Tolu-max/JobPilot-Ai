@@ -62,7 +62,7 @@
     "_note": "Public Greenhouse Job Board API scraper. Configure boards per profile. Scrape-only by default until adapter custom-question handling is hardened."
   },
   "weworkremotely": {
-    "enabled": false,
+    "enabled": true,
     "priority": 30,
     "maxJobsPerRun": 25,
     "cooldownMinutes": 1,
