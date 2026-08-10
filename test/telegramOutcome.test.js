@@ -122,6 +122,8 @@ test('pending reviews expose direct open, apply, and skip actions', async () => 
   await sendPendingReviews({ profileName: 'sister', displayName: 'Sister', telegramBotToken: 'token', telegramChatId: '123', jobStorePath }, '123');
 
   const buttons = sent[0].reply_markup.inline_keyboard[0];
+  assert.equal(sent[0].parse_mode, 'HTML');
+  assert.match(sent[0].text, /<b>Pending reviews<\/b>/);
   assert.equal(buttons[0].url, job.job_url);
   assert.match(buttons[1].callback_data, /^accept:sister:abcdef1234567890$/);
   assert.match(buttons[2].callback_data, /^reject:sister:abcdef1234567890$/);

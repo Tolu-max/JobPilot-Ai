@@ -157,6 +157,7 @@ export async function sendReviewNotification(job, score, config) {
     return;
   }
   reviewNotifCount++;
+  return sendReviewNotificationHtml(job, score, config);
 
   const profilePrefix = profileLabel(config);
   const callbackProfile = profileCallbackKey(config);
@@ -194,6 +195,41 @@ export async function sendReviewNotification(job, score, config) {
         [
           { text: '📄 Full Description', callback_data: `details:${callbackProfile}:${shortHash}` }
         ]
+      ]
+    }
+  });
+}
+
+async function sendReviewNotificationHtml(job, score, config) {
+  const recipient = resolveTelegramRecipient(config, { job });
+  const profile = escapeHtml(profileLabel(config));
+  const callbackProfile = profileCallbackKey(config);
+  const jobHash = job.job_hash || job.hash || hashJob(job) || '';
+  const shortHash = jobHash.slice(0, 16);
+  const title = escapeHtml(job.title || 'Untitled role');
+  const company = job.company ? `\nCompany: ${escapeHtml(job.company)}` : '';
+  const url = job.applicationUrl || job.job_url || '';
+  const reviewReason = job.reviewReason || job.review_reason || '';
+  const desc = truncateDescription(reviewReason || job.description || job.raw?.description || '');
+  const text = [
+    `<b>Review required</b> [${profile}]`,
+    '',
+    `<b>${title}</b>${company}`,
+    `Score: ${escapeHtml(score)} | Source: ${escapeHtml(job.source_site || 'unknown')}`,
+    desc ? `Reason: ${escapeHtml(desc)}` : ''
+  ].filter(Boolean).join('\n');
+  const firstRow = [];
+  if (url) firstRow.push({ text: 'Open job', url });
+  firstRow.push({ text: 'Apply', callback_data: `accept:${callbackProfile}:${shortHash}` });
+  firstRow.push({ text: 'Skip', callback_data: `reject:${callbackProfile}:${shortHash}` });
+  await sendWithRateLimit(config, recipient.telegram_chat_id, {
+    text,
+    parse_mode: 'HTML',
+    disable_web_page_preview: true,
+    reply_markup: {
+      inline_keyboard: [
+        firstRow,
+        [{ text: 'Details', callback_data: `details:${callbackProfile}:${shortHash}` }]
       ]
     }
   });
@@ -479,7 +515,7 @@ async function handleTextCommand(message, config, allConfigs) {
 async function sendTelegramApplicationResult(config, chatId, record = {}) {
   const status = String(record.status || 'unknown');
   const title = escapeMarkdown(record.title || 'Job');
-  const url = record.job_url || record.applicationUrl || '';
+  const url = record.job_url || record.applicationUrl || record.url || record.job?.job_url || record.job?.applicationUrl || '';
   if (status === 'applied') {
     await sendTelegramMessage(config, chatId, `*Application confirmed*\n${title}`);
     return;
@@ -626,6 +662,8 @@ async function sendJobDetails(config, chatId, record, profileName) {
 }
 
 async function sendPendingReviews(config, chatId) {
+  return sendPendingReviewsHtml(config, chatId);
+
   let reviews = [];
   try {
     const store = await loadJobStore(config);
@@ -665,6 +703,43 @@ async function sendPendingReviews(config, chatId) {
   });
 
   await sendWithRateLimit(config, chatId, { text: msg, parse_mode: 'MarkdownV2', reply_markup: { inline_keyboard: buttons } });
+}
+
+async function sendPendingReviewsHtml(config, chatId) {
+  let reviews = [];
+  try {
+    const store = await loadJobStore(config);
+    reviews = (store.jobs || [])
+      .filter((j) => j.status === 'reviewed' || j.status === 'pending_apply')
+      .sort((a, b) => (b.score || 0) - (a.score || 0))
+      .slice(0, 10);
+  } catch { /* empty */ }
+
+  if (reviews.length === 0) {
+    await sendWithRateLimit(config, chatId, { text: '<b>Pending reviews</b>\nNo pending reviews. All caught up.', parse_mode: 'HTML' });
+    return;
+  }
+
+  const profile = escapeHtml(profileLabel(config));
+  const callbackProfile = profileCallbackKey(config);
+  const lines = reviews.map((job, index) => {
+    const status = job.status === 'pending_apply' ? 'Queued' : 'Review';
+    return `${index + 1}. <b>${escapeHtml(job.title || 'Untitled role')}</b>\nScore: ${escapeHtml(job.score || 0)} | Status: ${status}`;
+  });
+  const buttons = reviews.slice(0, 3).flatMap((job) => {
+    const hash = (job.job_hash || hashJob(job) || '').slice(0, 16);
+    const row = [];
+    if (job.job_url || job.applicationUrl) row.push({ text: 'Open job', url: job.job_url || job.applicationUrl });
+    row.push({ text: 'Apply', callback_data: `accept:${callbackProfile}:${hash}` });
+    row.push({ text: 'Skip', callback_data: `reject:${callbackProfile}:${hash}` });
+    return [row];
+  });
+  await sendWithRateLimit(config, chatId, {
+    text: [`<b>Pending reviews</b> [${profile}] (${reviews.length})`, '', ...lines].join('\n'),
+    parse_mode: 'HTML',
+    disable_web_page_preview: true,
+    reply_markup: { inline_keyboard: buttons }
+  });
 }
 
 export { sendPendingReviews };
