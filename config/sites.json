@@ -69,6 +69,14 @@
     "autoApplyEnabled": true,
     "maxAgeDays": 14,
     "remoteOnly": true,
+    "feedUrls": [
+      "https://weworkremotely.com/categories/remote-customer-support-jobs.rss",
+      "https://weworkremotely.com/categories/remote-sales-and-marketing-jobs.rss",
+      "https://weworkremotely.com/categories/remote-management-and-finance-jobs.rss",
+      "https://weworkremotely.com/categories/remote-design-jobs.rss",
+      "https://weworkremotely.com/categories/remote-programming-jobs.rss",
+      "https://weworkremotely.com/remote-jobs.rss"
+    ],
     "jobsUrl": "https://weworkremotely.com/remote-job-rss-feed"
   },
   "remoteok": {

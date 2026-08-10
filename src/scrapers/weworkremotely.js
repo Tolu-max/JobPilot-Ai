@@ -5,6 +5,10 @@ import { extractApplyUrlFromHtml, matchesGatewayJobPolicy, parseSimpleRss } from
 const LISTING_URL = 'https://weworkremotely.com/remote-jobs.rss';
 const DEFAULT_FEEDS = [
   'https://weworkremotely.com/categories/remote-customer-support-jobs.rss',
+  'https://weworkremotely.com/categories/remote-sales-and-marketing-jobs.rss',
+  'https://weworkremotely.com/categories/remote-management-and-finance-jobs.rss',
+  'https://weworkremotely.com/categories/remote-design-jobs.rss',
+  'https://weworkremotely.com/categories/remote-programming-jobs.rss',
   'https://weworkremotely.com/remote-jobs.rss'
 ];
 const SAME_HOST_PATTERNS = [/weworkremotely\.com/i];
@@ -22,8 +26,12 @@ export class WeWorkRemotelyScraper extends BaseScraper {
       const xml = await this.fetchText(feedUrl);
       listings.push(...parseListingLinks(xml, feedUrl));
     }
+    const uniqueListings = Array.from(new Map(
+      listings.map((listing) => [listing.jobUrl || listing.applicationUrl, listing])
+    ).values());
+    uniqueListings.sort((left, right) => Date.parse(right.postedAt || '') - Date.parse(left.postedAt || ''));
     const limit = this.resolveMaxJobsPerRun();
-    return listings.slice(0, limit > 0 ? limit : 25);
+    return uniqueListings.slice(0, limit > 0 ? limit : 25);
   }
 
   normalizeJob(rawJob) {
