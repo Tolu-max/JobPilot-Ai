@@ -73,15 +73,14 @@ async function fillStep(page, step, ctx) {
   const email = ctx.config?.applicantEmail || candidate.email || '';
   const phone = firstPhone(candidate.phone || defaults.phone || '');
   const location = defaults.country || candidate.location || '';
-  const linkedin = candidate.linkedin || candidate.portfolioLinks?.linkedin || defaults.linkedinProfileUrl || '';
+  const linkedin = findLinkedIn(candidate) || defaults.linkedinProfileUrl || '';
 
   // Resume upload — Ashby's resume input has id _systemfield_resume.
   if (ctx.resumePath) {
     const fileInput = page.locator('input[type="file"]#_systemfield_resume, input[type="file"]').first();
-    if (await fileInput.isVisible({ timeout: 3000 }).catch(() => false)) {
-      await fileInput.setInputFiles(ctx.resumePath, { timeout: 10000 }).catch(() => {});
-      await page.waitForTimeout(1200);
-    }
+    await fileInput.waitFor({ state: 'attached', timeout: 5000 }).catch(() => {});
+    await fileInput.setInputFiles(ctx.resumePath, { timeout: 10000 }).catch(() => {});
+    await page.waitForTimeout(1200);
   }
 
   // Ashby uses stable names only for the system Name/Email fields; phone,
@@ -90,7 +89,11 @@ async function fillStep(page, step, ctx) {
   await reactFill(page, 'input[name="_systemfield_name"]', fullName);
   await reactFill(page, 'input[name="_systemfield_email"], input[type="email"]', email);
   await reactFill(page, 'input[type="tel"]', phone);
-  await reactFill(page, page.getByLabel(/linkedin/i), linkedin);
+  await reactFill(
+    page,
+    'input[name*="linkedin" i], input[id*="linkedin" i], input[placeholder*="linkedin" i]',
+    linkedin
+  ) || await reactFill(page, page.getByLabel(/linkedin/i), linkedin);
   await reactFill(page, page.getByLabel(/country|location|where are you/i), location);
   // Cover letter / notes: only fill when one was pre-generated.
   if (ctx.coverLetter) {
@@ -137,6 +140,14 @@ async function fillStep(page, step, ctx) {
   }
 
   await page.waitForTimeout(500);
+}
+
+function findLinkedIn(candidate = {}) {
+  if (candidate.linkedin) return candidate.linkedin;
+  const links = Array.isArray(candidate.portfolioLinks)
+    ? candidate.portfolioLinks
+    : Object.values(candidate.portfolioLinks || {});
+  return links.find((value) => /linkedin\.com/i.test(String(value || ''))) || '';
 }
 
 async function answerApplicationQuestion(question, ctx, cv) {
