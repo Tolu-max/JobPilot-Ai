@@ -131,4 +131,9 @@ if [ -n "${JOBPILOT_RESET_BRUNTWORK_ID:-}" ]; then
   node ./scripts/ops/reset-bruntwork-jobs-once.mjs
 fi
 
+if [ -n "${JOBPILOT_RESET_SITE:-}" ]; then
+  echo "[bootstrap] Resetting non-applied jobs for site: ${JOBPILOT_RESET_SITE}"
+  node ./scripts/ops/reset-site-jobs-once.mjs
+fi
+
 exec "$@"
