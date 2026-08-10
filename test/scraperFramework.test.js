@@ -395,6 +395,18 @@ test('jobberman cursor keeps only jobs newer than the previous top listing', () 
   );
 });
 
+test('jobberman can rescan the recent window when the cursor is stale', () => {
+  const jobs = [
+    { title: 'Newer', applicationUrl: 'https://www.jobberman.com/listings/newer' },
+    { title: 'Previous top', applicationUrl: 'https://www.jobberman.com/listings/previous-top' }
+  ];
+
+  assert.deepEqual(
+    jobbermanJobsSinceLastSeen(jobs, 'https://www.jobberman.com/listings/newer', { rescanRecent: true }),
+    jobs
+  );
+});
+
 test('jobberman scans a recent window before applying the final profile limit', async () => {
   class FakeJobbermanScraper extends JobbermanScraper {
     async fetchText(url) {

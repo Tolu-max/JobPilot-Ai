@@ -46,7 +46,9 @@ export class JobbermanScraper extends BaseScraper {
     }
 
     const filteredJobs = sortJobbermanJobsNewestFirst(filterJobbermanJobsByPolicy(jobs, this.siteConfig));
-    return jobsSinceLastSeen(filteredJobs, this.siteConfig.lastSeenJobUrl);
+    return jobsSinceLastSeen(filteredJobs, this.siteConfig.lastSeenJobUrl, {
+      rescanRecent: this.siteConfig.rescanRecentJobs === true
+    });
   }
 
   normalizeJob(rawJob) {
@@ -211,7 +213,8 @@ export function sortJobbermanJobsNewestFirst(jobs = []) {
   });
 }
 
-export function jobsSinceLastSeen(jobs = [], lastSeenJobUrl = '') {
+export function jobsSinceLastSeen(jobs = [], lastSeenJobUrl = '', options = {}) {
+  if (options.rescanRecent === true) return jobs;
   const marker = String(lastSeenJobUrl || '').trim();
   if (!marker) return jobs;
   const markerIndex = jobs.findIndex((job) => String(job.applicationUrl || job.jobUrl || '') === marker);

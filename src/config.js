@@ -399,6 +399,7 @@ function applySiteEnvOverrides(siteConfig, site, envPrefix, env) {
     englishOnly: 'ENGLISH_ONLY',
     allowOtherLocationsWhenNoPreferred: 'ALLOW_OTHER_LOCATIONS_WHEN_NO_PREFERRED'
   };
+  if (site === 'jobberman') booleanFields.rescanRecentJobs = 'RESCAN_RECENT_JOBS';
   for (const [field, envName] of Object.entries(booleanFields)) {
     const value = scoped(envName);
     if (value !== undefined && value !== '') siteConfig[field] = readBoolean(value, siteConfig[field]);
