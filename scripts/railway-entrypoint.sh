@@ -99,6 +99,18 @@ if [ -n "${JOBPILOT_BRUNTWORK_RECHECK_ID:-}" ]; then
   node ./scripts/ops/run-bruntwork-recheck-once.mjs
 fi
 
+if [ -n "${JOBPILOT_BRUNTWORK_TARGETED_URL:-}" ]; then
+  echo "[bootstrap] Running requested targeted BruntWork check"
+  targeted_args=(
+    --profile="${JOBPILOT_BRUNTWORK_TARGETED_PROFILE:-tolu}"
+    --url="${JOBPILOT_BRUNTWORK_TARGETED_URL}"
+  )
+  if [ "${JOBPILOT_BRUNTWORK_TARGETED_FORCE_REVIEWED:-false}" = "true" ]; then
+    targeted_args+=(--force-reviewed)
+  fi
+  node ./scripts/apply-bruntwork-targeted.mjs "${targeted_args[@]}"
+fi
+
 if [ -n "${JOBPILOT_BRUNTWORK_LIVE_RERUN_ID:-}" ]; then
   echo "[bootstrap] Running requested live BruntWork rerun: ${JOBPILOT_BRUNTWORK_LIVE_RERUN_ID}"
   node ./scripts/ops/run-bruntwork-live-rerun-once.mjs
