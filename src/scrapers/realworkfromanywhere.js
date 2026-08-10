@@ -22,15 +22,20 @@ export class RealWorkFromAnywhereScraper extends BaseScraper {
       try {
         const xml = await this.fetchText(feedUrl);
         const items = parseSimpleRss(xml);
-        for (const item of items) {
-          jobs.push(await this.enrichItem(item).catch(() => item));
-        }
+        jobs.push(...items);
       } catch (error) {
         await this.log(`Feed skipped (${feedUrl}): ${error.message}`);
       }
     }
 
-    return jobs;
+    const uniqueJobs = Array.from(new Map(
+      jobs.map((job) => [job.guid || job.link, job])
+    ).values());
+    uniqueJobs.sort((left, right) => Date.parse(right.pubDate || '') - Date.parse(left.pubDate || ''));
+
+    const limit = this.resolveMaxJobsPerRun() || 40;
+    const scanLimit = Math.max(limit * 3, 60);
+    return Promise.all(uniqueJobs.slice(0, scanLimit).map((item) => this.enrichItem(item).catch(() => item)));
   }
 
   async enrichItem(item) {
