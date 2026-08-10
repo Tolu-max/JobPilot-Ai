@@ -54,12 +54,17 @@ export function parseMyJobMagListings(html, query = '') {
 
     const path = titleMatch[1];
     const rawTitle = titleMatch[2].replace(/<[^>]+>/g, '').trim();
+    const titleParts = rawTitle.split(/\s+at\s+/i);
+    const parsedTitle = titleParts[0].trim();
+    const titleCompany = titleParts.slice(1).join(' at ').trim();
     const applicationUrl = path.startsWith('http') ? path : `https://www.myjobmag.com${path}`;
 
     // Extract Company
     const companyMatch = block.match(/class="[^"]*job-item-company[^"]*"[^>]*>([\s\S]*?)<\/(?:span|a|div)>/i) ||
                          block.match(/<a href="\/jobs-at\/[^"]+"[^>]*>([\s\S]*?)<\/a>/i);
-    const company = companyMatch ? companyMatch[1].replace(/<[^>]+>/g, '').trim() : 'Unknown';
+    const company = companyMatch
+      ? companyMatch[1].replace(/<[^>]+>/g, '').trim()
+      : titleCompany || 'Unknown';
 
     // Extract Description / Summary snippet
     const descMatch = block.match(/<li class="job-desc"[^>]*>([\s\S]*?)<\/li>/i) ||
@@ -74,7 +79,7 @@ export function parseMyJobMagListings(html, query = '') {
 
     jobs.push({
       id: `myjobmag-${id}`,
-      title: rawTitle,
+      title: parsedTitle || rawTitle,
       company,
       location,
       description,

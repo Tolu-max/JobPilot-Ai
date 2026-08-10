@@ -174,7 +174,7 @@
     "_disabled_reason": "Temporarily paused while source freshness and application delivery are being improved."
   },
   "myjobmag": {
-    "enabled": false,
+    "enabled": true,
     "priority": 150,
     "maxJobsPerRun": 20,
     "cooldownMinutes": 1,
