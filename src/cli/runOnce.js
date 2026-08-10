@@ -55,6 +55,7 @@ export async function cmdRun(args = {}) {
 
   console.log();
   console.log(`  ${pc.bold('JobPilot')} ${pc.dim('-')} run pass for ${label}`);
+  console.log(`  ${pc.dim('sites:')}        ${pc.white(config.enabledSites.join(',') || '(none)')}`);
   if (config.testMode) console.log(`  ${pc.yellow('TEST_MODE')}      ${pc.dim('- no real submissions')}`);
   if (noApply || maxApplies === 0) console.log(`  ${pc.yellow('NO-APPLY')}       ${pc.dim('- scoring only, no submissions this run')}`);
   if (maxJobs !== null) console.log(`  ${pc.dim('max-jobs:')}     ${pc.white(maxJobs)}`);
