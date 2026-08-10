@@ -250,7 +250,7 @@
     "autoApplyEnabled": true
   },
   "realworkfromanywhere": {
-    "enabled": false,
+    "enabled": true,
     "priority": 235,
     "maxJobsPerRun": 20,
     "cooldownMinutes": 1,
