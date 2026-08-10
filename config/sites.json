@@ -154,7 +154,7 @@
     "_disabled_reason": "Planned scraper; not implemented yet"
   },
   "jobberman": {
-    "enabled": true,
+    "enabled": false,
     "priority": 140,
     "maxJobsPerRun": 50,
     "cooldownMinutes": 1,
@@ -162,7 +162,7 @@
     "jobsUrl": "https://www.jobberman.com/jobs/remote",
     "remoteOnly": true,
     "maxAgeDays": 30,
-    "_note": "Second supported source after BruntWork. Scrape/review first; live apply requires a logged-in Jobberman jobseeker session."
+    "_disabled_reason": "Temporarily paused while source freshness and application delivery are being improved."
   },
   "myjobmag": {
     "enabled": false,
