@@ -80,7 +80,7 @@
     "_disabled_reason": "Apply flow redirects to remoteok.com/sign-up wall; adapter cannot resolve an outbound apply destination. Queued jobs retried forever and burned scheduler cycles."
   },
   "workingnomads": {
-    "enabled": false,
+    "enabled": true,
     "priority": 50,
     "maxJobsPerRun": 15,
     "cooldownMinutes": 1,
