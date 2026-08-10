@@ -149,7 +149,8 @@ function mergeProfilePreferences(profile, preferences = {}) {
     remotePreference: profile.remotePreference || preferences.remotePreference || 'prefer_remote',
     targetSeniorities: union(profile.targetSeniorities, preferences.targetSeniorities),
     hardFilters: union(profile.hardFilters, preferences.hardFilters),
-    exclusions: union(profile.exclusions, preferences.exclusions)
+    exclusions: union(profile.exclusions, preferences.exclusions),
+    titleExclusions: union(profile.titleExclusions, preferences.titleExclusions)
   };
 }
 
