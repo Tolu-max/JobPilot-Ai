@@ -81,8 +81,9 @@ function filterBruntWorkJobsByRecency(jobs, siteConfig = {}) {
   if (!Number.isFinite(maxAgeDays) || maxAgeDays <= 0) return jobs;
   const cutoff = Date.now() - maxAgeDays * 24 * 60 * 60 * 1000;
   return jobs.filter((job) => {
-    const postedAt = Date.parse(job.postedAt || '');
-    return Number.isFinite(postedAt) && postedAt >= cutoff;
+    if (!job.postedAt) return true;
+    const postedAt = Date.parse(job.postedAt);
+    return !Number.isFinite(postedAt) || postedAt >= cutoff;
   });
 }
 

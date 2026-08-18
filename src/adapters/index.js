@@ -26,7 +26,6 @@ const ADAPTERS = [
   workableAdapter,
   ashbyAdapter,
   bamboohrAdapter,
-  myjobmagAdapter,
   genericAdapter
 ];
 
