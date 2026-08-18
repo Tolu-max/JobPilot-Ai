@@ -1,5 +1,6 @@
 import { compactText } from './utils.js';
 import aiRouter, { TaskTypes } from './aiRouter.js';
+import { evaluateHistoricalCluster, ClusterTier } from './matching/historicalClusterEvaluator.js';
 
 const defaultHardFilters = [
   'u.s. work authorization',
@@ -90,17 +91,49 @@ export async function localMatchJob(job, candidateProfile, config = {}) {
 
   // Cost boundary: this first-pass matcher must remain deterministic and local.
   // Paid AI verification happens later in the pipeline only for strong matches.
+  const profileName = String(config.profileName || candidateProfile.profileName || candidateProfile.name || 'tolu').toLowerCase();
+  const clusterEval = evaluateHistoricalCluster(job, profileName);
+
+  if (clusterEval.tier === ClusterTier.HARD_EXCLUSION) {
+    return {
+      score: 0,
+      recommendation: 'ignore',
+      matchedSkills: [],
+      missingSkills: [],
+      reasons: clusterEval.reasons,
+      cluster: clusterEval
+    };
+  }
+
   const localScore = keywordBasedScore(job, candidateProfile, config);
+  let finalScore = localScore.score;
+
+  // Apply empirical historical cluster multiplier
+  if (clusterEval.tier === ClusterTier.PROVEN_WINNER) {
+    // Proven winner (WordPress & SEO for Tolu, Real Estate VA for Sister)
+    finalScore = Math.min(98, Math.max(86, finalScore + clusterEval.scoreAdjustment));
+  } else if (clusterEval.tier === ClusterTier.SELECTIVE_FIT) {
+    finalScore = Math.min(88, Math.max(70, finalScore + clusterEval.scoreAdjustment));
+  } else if (clusterEval.tier === ClusterTier.FAILED_DEAD_CLUSTER) {
+    // Dead cluster (Shopify/React for Tolu, Generic Data Entry for Sister)
+    finalScore = Math.min(48, Math.max(0, finalScore + clusterEval.scoreAdjustment));
+  }
+
+  const combinedReasons = [
+    ...(clusterEval.reasons || []),
+    ...(localScore.reasons || ['Local CV and keyword matching'])
+  ];
 
   return {
-    score: localScore.score,
-    recommendation: recommendationForScore(localScore.score, {
+    score: finalScore,
+    recommendation: recommendationForScore(finalScore, {
       ...candidateProfile,
-      profileName: config.profileName || candidateProfile.profileName
+      profileName
     }),
     matchedSkills: localScore.matchedSkills || [],
     missingSkills: localScore.missingSkills || [],
-    reasons: localScore.reasons || ['Local CV and keyword matching']
+    reasons: combinedReasons,
+    cluster: clusterEval
   };
 }
 
