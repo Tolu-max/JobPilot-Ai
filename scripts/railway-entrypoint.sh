@@ -141,4 +141,9 @@ if [ -n "${JOBPILOT_SKIP_TITLES:-}" ]; then
   node ./scripts/ops/skip-profile-titles-once.mjs
 fi
 
+if [ "${JOBPILOT_WRITE_CLEAN_PREFS:-}" = "true" ]; then
+  echo "[bootstrap] Writing clean bruntwork-only preferences to volume..."
+  node ./scripts/ops/write_clean_prefs.cjs
+fi
+
 exec "$@"
