@@ -73,11 +73,45 @@ const workerProfiles = String(process.env.PROFILES || 'tolu,sister')
   .split(',')
   .map((name) => name.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, ''))
   .filter(Boolean);
+
+await bootstrapVolumeDirs();
+
+// Sanitize profiles on volume to ensure strictly bruntwork only and no cooldown lockouts
+for (const prof of ['tolu', 'sister']) {
+  const pDir = path.join(process.cwd(), 'profiles', prof);
+  const pPrefs = path.join(pDir, 'preferences.json');
+  try {
+    const raw = await fs.readFile(pPrefs, 'utf8');
+    const parsed = JSON.parse(raw);
+    parsed.enabledSites = ['bruntwork'];
+    parsed.sitePriority = ['bruntwork'];
+    parsed.siteLimits = { bruntwork: 200 };
+    parsed.sites = {
+      bruntwork: {
+        enabled: true,
+        maxJobsPerRun: 200,
+        maxAgeDays: 7,
+        cooldownMinutes: 1,
+        autoApplyEnabled: true
+      }
+    };
+    await fs.writeFile(pPrefs, JSON.stringify(parsed, null, 2), 'utf8');
+    console.log(`[worker] Sanitized ${prof} preferences to bruntwork only.`);
+  } catch (err) {
+    console.error(`[worker] Failed to sanitize ${prof} preferences:`, err.message);
+  }
+
+  const pState = path.join(pDir, 'siteRunState.json');
+  try {
+    await fs.writeFile(pState, JSON.stringify({ sites: {} }, null, 2), 'utf8');
+    console.log(`[worker] Reset ${prof} siteRunState cooldowns.`);
+  } catch (err) {}
+}
+
 const workerConfigs = workerProfiles.map((profile) =>
   buildConfig([process.execPath, 'jobpilot', `--profile=${profile}`])
 );
 
-await bootstrapVolumeDirs();
 registerRunner(() => runPass());
 if (resetProfiles.size > 0 && !(await fileExists(resetMarker))) {
   for (const profile of resetProfiles) {
