@@ -17,6 +17,9 @@ profiles/*/*.pdf
 profiles/*/*.backup.json
 profiles/*/reviewQueue.json
 profiles/*/siteRunState.json
+profiles/*/gmailToken.json
+profiles/*/gmailSyncState.json
+*gmailToken*.json
 !profiles/example/candidateProfile.json
 *.pdf
 *.docx

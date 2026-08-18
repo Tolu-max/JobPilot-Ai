@@ -221,3 +221,33 @@ test('Interview details extractor handles Zoom, Teams, missing dates, and timezo
   assert.equal(noLinkDetails.meetingUrl, '');
   assert.equal(noLinkDetails.platform, 'Other / Unknown');
 });
+
+test('Security hardening: .gitignore includes gmailToken and sync state ignore rules', () => {
+  const gitignoreContent = fs.readFileSync(path.join(ROOT_DIR, '.gitignore'), 'utf8');
+  assert.ok(gitignoreContent.includes('gmailToken'), '.gitignore must explicitly include gmailToken rule');
+  assert.ok(gitignoreContent.includes('gmailSyncState'), '.gitignore must explicitly include gmailSyncState rule');
+});
+
+test('Security hardening: Doctor check and diagnostics never expose raw refresh token values', async () => {
+  const { inspectHealth } = await import('../src/cli/doctor.js');
+  const secretRefreshToken = 'sensitive-super-secret-refresh-token-12345';
+
+  const report = await inspectHealth({
+    rootDir: ROOT_DIR,
+    profileName: 'tolu',
+    env: {
+      ...process.env,
+      TOLU_GMAIL_CLIENT_ID: 'tolu-client-id',
+      TOLU_GMAIL_CLIENT_SECRET: 'tolu-client-secret',
+      TOLU_GMAIL_REFRESH_TOKEN: secretRefreshToken
+    }
+  });
+
+  const reportJson = JSON.stringify(report);
+  assert.equal(reportJson.includes(secretRefreshToken), false, 'Doctor report JSON must never contain raw refresh token value');
+
+  const gmailCheck = report.profiles[0].checks.find(c => c.label === 'Gmail Integration');
+  assert.ok(gmailCheck, 'Gmail Integration check should exist');
+  assert.equal(gmailCheck.status, 'pass');
+  assert.equal(gmailCheck.detail.includes(secretRefreshToken), false, 'Check detail must not contain token');
+});

@@ -116,7 +116,15 @@ export class GmailAuthenticator {
       profile: this.profileName,
       updatedAt: new Date().toISOString()
     };
-    await fs.writeFile(this.tokenFilePath, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
+    await fs.writeFile(this.tokenFilePath, `${JSON.stringify(payload, null, 2)}\n`, {
+      encoding: 'utf8',
+      mode: 0o600
+    });
+    try {
+      await fs.chmod(this.tokenFilePath, 0o600);
+    } catch {
+      // POSIX chmod fallback
+    }
     if (tokenData.access_token) {
       this.cachedAccessToken = tokenData.access_token;
       this.tokenExpiresAt = Date.now() + ((tokenData.expires_in || 3600) * 1000) - 60000;

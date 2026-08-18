@@ -117,13 +117,15 @@ async function runGmailOAuthFlow(config) {
 
               console.log();
               printSuccess(`Gmail authorization successful for candidate: ${profileName}`);
-              printInfo(`Tokens saved to: ${authenticator.tokenFilePath}`);
+              printInfo(`Tokens securely saved to: ${authenticator.tokenFilePath}`);
               console.log();
               printBox([
-                `${pc.white('Deployment to Railway:')}`,
-                `To run Gmail sync on Railway, add this environment variable:`,
-                `${pc.yellow(`${profileName.toUpperCase()}_GMAIL_REFRESH_TOKEN`)}="${tokenData.refresh_token}"`
-              ], { title: 'Railway Setup' });
+                `${pc.white('Security & Persistence:')}`,
+                `• Tokens are saved with restricted permissions in:`,
+                `  ${pc.cyan(authenticator.tokenFilePath)}`,
+                `• In Railway with volume storage (/app/data/profiles), tokens persist automatically.`,
+                `• If using environment variables, configure ${pc.yellow(`${profileName.toUpperCase()}_GMAIL_REFRESH_TOKEN`)} securely in Railway settings.`
+              ], { title: 'Gmail Authorization Complete' });
 
               server.close(() => resolve());
             } catch (err) {
