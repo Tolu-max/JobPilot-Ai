@@ -491,6 +491,12 @@ export async function flushPendingApplyQueue(config, autoApplyBudget = createAut
   await appendLog(`Flushing ${pending.length} Telegram-approved job(s)`, config);
   for (const record of pending) {
     const source = record.source_site || record.source || 'unknown';
+    if (config.enabledSites && config.enabledSites.length > 0 && !config.enabledSites.includes(source)) {
+      await appendLog(`Pending apply skipped (disabled site ${source}): ${job.title}`, config);
+      await upsertJobRecord(config, job, 'ignored', { reason: `Site ${source} is disabled.` });
+      summary.blocked += 1;
+      continue;
+    }
     if (!canAttemptAutoApply(autoApplyBudget, source)) {
       await appendLog(`Pending apply held: ${record.title} - ${autoApplyLimitReason(autoApplyBudget, source)}`, config);
       summary.held += 1;
