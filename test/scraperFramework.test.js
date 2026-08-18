@@ -18,6 +18,7 @@ import { TheMuseScraper } from '../src/scrapers/themuse.js';
 import { ArbeitnowScraper } from '../src/scrapers/arbeitnow.js';
 import { RealWorkFromAnywhereScraper } from '../src/scrapers/realworkfromanywhere.js';
 import { WorkingNomadsScraper } from '../src/scrapers/workingnomads.js';
+import { HimalayasScraper } from '../src/scrapers/himalayas.js';
 import { classifyApplyUrl, detectDownstreamAdapter } from '../src/adapters/remoteok.js';
 import {
   classifyApplyUrl as classifyApplyDestination,
@@ -851,6 +852,53 @@ test('workingnomads scraper filters old and non-remote-looking jobs', async () =
 
   const jobs = await new FakeWorkingNomadsScraper({ maxJobsPerRun: 10 }, { maxAgeDays: 14, remoteOnly: true }).scrape();
   assert.deepEqual(jobs.map((job) => job.title), ['Customer Success Manager']);
+});
+
+test('himalayas scraper filters stale and profile-excluded jobs', async () => {
+  class FakeHimalayasScraper extends HimalayasScraper {
+    async fetchJobs() {
+      return [
+        {
+          guid: 'fresh-wordpress',
+          title: 'WordPress Developer',
+          companyName: 'Acme',
+          locationRestrictions: ['Nigeria'],
+          timezoneRestrictions: [1],
+          pubDate: Math.floor(Date.now() / 1000),
+          applicationLink: 'https://himalayas.app/jobs/fresh-wordpress'
+        },
+        {
+          guid: 'old-wordpress',
+          title: 'Old WordPress Developer',
+          companyName: 'Acme',
+          locationRestrictions: ['Nigeria'],
+          timezoneRestrictions: [1],
+          pubDate: Math.floor(new Date('2026-01-01T00:00:00Z').getTime() / 1000),
+          applicationLink: 'https://himalayas.app/jobs/old-wordpress'
+        },
+        {
+          guid: 'admin-role',
+          title: 'Administrative Assistant',
+          companyName: 'Acme',
+          locationRestrictions: ['Nigeria'],
+          timezoneRestrictions: [1],
+          pubDate: Math.floor(Date.now() / 1000),
+          applicationLink: 'https://himalayas.app/jobs/admin-role'
+        }
+      ];
+    }
+  }
+
+  const jobs = await new FakeHimalayasScraper(
+    { maxJobsPerRun: 10 },
+    {
+      maxAgeDays: 14,
+      includeTitleKeywords: ['wordpress'],
+      excludeKeywords: ['administrative assistant']
+    }
+  ).scrape();
+
+  assert.deepEqual(jobs.map((job) => job.title), ['WordPress Developer']);
 });
 
 test('remoteok resolver only allows audited downstream adapters', () => {

@@ -36,7 +36,7 @@ export class BruntWorkScraper extends BaseScraper {
       const results = await Promise.all(batch.map(async (link, batchIndex) => {
         const index = offset + batchIndex;
         try {
-          const detailHtml = await this.fetchText(link.applicationUrl);
+          const detailHtml = await this.fetchText(link.applicationUrl, { timeoutMs: 12000 });
           const detail = parseJobDetail(detailHtml, link);
           return { index, detail };
         } catch (error) {
@@ -92,13 +92,13 @@ function resolveDetailConcurrency(siteConfig = {}) {
     siteConfig.detailConcurrency ?? process.env.BRUNTWORK_DETAIL_CONCURRENCY,
     10
   );
-  return Number.isFinite(value) && value > 0 ? Math.min(value, 10) : 5;
+  return Number.isFinite(value) && value > 0 ? Math.min(value, 10) : 6;
 }
 
 export function resolveBruntWorkDetailScanLimit(siteConfig = {}, profileLimit = 10) {
   const configured = Number.parseInt(siteConfig.detailScanLimit, 10);
   if (Number.isFinite(configured) && configured > 0) return Math.max(configured, profileLimit > 0 ? profileLimit : configured);
-  return profileLimit > 0 ? Math.max(profileLimit * 3, 30) : 100;
+  return profileLimit > 0 ? Math.min(Math.max(profileLimit * 3, 30), 50) : 50;
 }
 
 const resolveDetailScanLimit = resolveBruntWorkDetailScanLimit;

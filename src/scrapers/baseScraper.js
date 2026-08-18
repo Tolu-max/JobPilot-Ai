@@ -128,7 +128,7 @@ export class BaseScraper {
   }
 
   async fetchWithTimeout(url, options = {}) {
-    const timeoutMs = Number.parseInt(this.siteConfig.timeoutMs, 10) || 30000;
+    const timeoutMs = Number.parseInt(options.timeoutMs ?? this.siteConfig.timeoutMs, 10) || 30000;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
 

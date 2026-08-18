@@ -80,12 +80,22 @@ export class HimalayasScraper extends BaseScraper {
   matchesSitePolicy(job) {
     if (!super.matchesSitePolicy(job)) return false;
 
+    const maxAgeDays = Number.parseInt(this.siteConfig.maxAgeDays, 10);
+    if (Number.isFinite(maxAgeDays) && maxAgeDays >= 0 && isOlderThan(job.postedAt, maxAgeDays)) return false;
+
     const raw = job.raw || {};
     if (this.siteConfig.nigeriaOnly !== false && !allowsNigeria(raw)) return false;
     if (this.siteConfig.lagosTimezoneCompatible !== false && !allowsNigeriaTimezone(raw)) return false;
 
     return true;
   }
+}
+
+function isOlderThan(postedAt, maxAgeDays) {
+  if (!postedAt) return false;
+  const timestamp = new Date(postedAt).getTime();
+  if (!Number.isFinite(timestamp)) return false;
+  return Date.now() - timestamp > maxAgeDays * 24 * 60 * 60 * 1000;
 }
 
 function resolveExternalApplyUrl(rawJob = {}, himalayasUrl, siteConfig = {}) {
