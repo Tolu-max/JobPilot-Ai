@@ -32,6 +32,15 @@ export const COMMANDS = Object.freeze([
     load: async () => (await import('./commands.js')).cmdSetupEmail
   },
   {
+    name: 'gmail',
+    category: 'Setup',
+    summary: 'Gmail OAuth setup & sync',
+    aliases: ['gmail-auth', 'gmail-sync'],
+    usage: 'jobpilot gmail auth --profile=<name> | jobpilot gmail sync --profile=<name>',
+    profileAware: true,
+    load: async () => (await import('./gmailCmd.js')).cmdGmail
+  },
+  {
     name: 'telegram',
     category: 'Setup',
     summary: 'Link a local Telegram bot/chat',

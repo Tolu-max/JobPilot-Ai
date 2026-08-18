@@ -126,6 +126,28 @@ export async function inspectProfile(rootDir, profileName, {
     ? pass('Enabled sites', `${enabledSites} configured`)
     : warn('Enabled sites', 'No sites enabled in preferences'));
 
+  const envPrefix = profileName.toUpperCase();
+  const hasGmailConfig = Boolean(
+    env[`${envPrefix}_GMAIL_CLIENT_ID`] || env.GMAIL_CLIENT_ID || prefs?.gmail?.clientId
+  );
+  const hasGmailToken = Boolean(
+    env[`${envPrefix}_GMAIL_REFRESH_TOKEN`] || env.GMAIL_REFRESH_TOKEN || prefs?.gmail?.refreshToken
+  );
+  const tokenFilePath = path.join(profileDir, 'gmailToken.json');
+  let tokenFileExists = false;
+  try {
+    const stat = await fs.stat(tokenFilePath);
+    tokenFileExists = stat.size > 0;
+  } catch {}
+
+  if (hasGmailToken || (hasGmailConfig && tokenFileExists)) {
+    checks.push(pass('Gmail Integration', 'OAuth configured & refresh token available'));
+  } else if (hasGmailConfig) {
+    checks.push(info('Gmail Integration', 'Client credentials configured; run: jobpilot gmail auth'));
+  } else {
+    checks.push(info('Gmail Integration', 'Not configured (optional - run: jobpilot gmail auth)'));
+  }
+
   const summary = summarizeChecks(checks);
 
   return {

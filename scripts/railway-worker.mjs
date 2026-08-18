@@ -186,6 +186,15 @@ async function runProfilesIndividually() {
     });
     console.log(`[worker] ${profile} run exited code=${lastResult.code ?? 'null'} signal=${lastResult.signal || 'none'}`);
     reprocessedProfile ||= reprocess;
+
+    // Incremental Gmail sync for profile
+    try {
+      const { syncGmailForProfile } = await import('../src/gmail/gmailSync.js');
+      const profileConfig = buildConfig([process.execPath, 'jobpilot', `--profile=${profile}`]);
+      await syncGmailForProfile(profileConfig);
+    } catch (err) {
+      console.warn(`[worker] Gmail sync skipped for ${profile}: ${err.message}`);
+    }
   }
 
   return { ...lastResult, reprocessedProfile };
