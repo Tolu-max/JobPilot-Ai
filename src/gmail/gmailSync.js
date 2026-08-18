@@ -2,7 +2,8 @@
  * Gmail Incremental Sync & Lifecycle Event Dispatcher
  *
  * Runs incrementally, maintains sync checkpoints, deduplicates messages,
- * updates jobStore post-application lifecycle, and notifies candidate via Telegram.
+ * updates jobStore post-application lifecycle with monotonic safety,
+ * and notifies candidate via Telegram only for live new events.
  */
 
 import fs from 'node:fs/promises';
@@ -13,6 +14,44 @@ import { matchEmailToApplication, MatchConfidenceLevel } from './gmailApplicatio
 import { loadJobStore, saveJobStore } from '../jobStore.js';
 import { sendNotification } from '../notifications.js';
 import { getResumeProfile } from '../resumeLibrary.js';
+
+export const LIFECYCLE_STAGE_RANK = Object.freeze({
+  applied: 0,
+  application_confirmed: 1,
+  recruiter_response: 2,
+  assessment_requested: 3,
+  recruiter_interview_invited: 4,
+  recruiter_interview_completed: 5,
+  client_interview_invited: 6,
+  client_interview_completed: 7,
+  offer: 8,
+  hired: 9,
+  rejected: 10,
+  withdrawn: 11
+});
+
+export async function isGmailSyncDue(config = {}) {
+  if (config.gmailSyncEnabled === false || process.env.GMAIL_SYNC_ENABLED === 'false') {
+    return false;
+  }
+
+  const profileName = String(config.profileName || 'tolu').toLowerCase();
+  const profileDir = config.profileDir || path.resolve(process.cwd(), 'profiles', profileName);
+  const syncStatePath = path.join(profileDir, 'gmailSyncState.json');
+
+  const intervalMs = Number.parseInt(
+    config.gmailSyncIntervalMs ?? process.env.GMAIL_SYNC_INTERVAL_MS,
+    10
+  ) || 300000; // 5 minutes default
+
+  const syncState = await loadSyncState(syncStatePath);
+  if (!syncState.lastSyncAt) return true;
+
+  const lastSyncTime = new Date(syncState.lastSyncAt).getTime();
+  if (Number.isNaN(lastSyncTime)) return true;
+
+  return Date.now() - lastSyncTime >= intervalMs;
+}
 
 export async function syncGmailForProfile(config = {}, options = {}) {
   const profileName = String(config.profileName || 'tolu').toLowerCase();
@@ -32,15 +71,16 @@ export async function syncGmailForProfile(config = {}, options = {}) {
   }
 
   const syncState = await loadSyncState(syncStatePath);
+  const isInitialHistoricalSync = !syncState.lastSyncAt;
   const processedMessageIds = new Set(syncState.processedMessageIds || []);
   const processedEventKeys = new Set(syncState.processedEventKeys || []);
 
-  // Build targeted search query
-  const query = buildTargetedQuery(config);
+  // Build targeted search query based on initial vs ongoing sync
+  const query = buildTargetedQuery(config, isInitialHistoricalSync);
 
   let searchResult;
   try {
-    searchResult = await client.searchMessages(query, { maxResults: 35 });
+    searchResult = await client.searchMessages(query, { maxResults: isInitialHistoricalSync ? 50 : 25 });
   } catch (err) {
     console.warn(`[gmailSync] Search failed for ${profileName}: ${err.message}`);
     return { ok: false, error: err.message };
@@ -51,9 +91,8 @@ export async function syncGmailForProfile(config = {}, options = {}) {
   console.log(`[gmailSync] Found ${messagesToFetch.length} new messages (out of ${allFoundMessages.length} total) for profile: ${profileName}`);
 
   let newEventsCount = 0;
-  const allowNotifications = config.gmailBackfillNotifications !== false
-    && process.env.GMAIL_BACKFILL_NOTIFICATIONS !== 'false'
-    && !options.suppressNotifications;
+  const globalNotificationSetting = config.gmailBackfillNotifications !== false && process.env.GMAIL_BACKFILL_NOTIFICATIONS !== 'false';
+  const liveEventMaxAgeMs = 48 * 60 * 60 * 1000; // 48 hours threshold for live alerts
 
   for (const msgMeta of messagesToFetch) {
     try {
@@ -94,15 +133,19 @@ export async function syncGmailForProfile(config = {}, options = {}) {
         excerpt: (parsedEmail.bodyText || parsedEmail.snippet || '').slice(0, 300)
       };
 
-      // 4. Update Application State in candidate store if matched
+      // 4. Update Application State in candidate store if matched (Monotonic Progression)
       if (matchResult.jobRecord && matchResult.matchConfidenceLevel !== MatchConfidenceLevel.UNMATCHED) {
         await updateJobLifecycleRecord(config, matchResult.jobRecord, evidence);
       }
 
-      // 5. Send Telegram Notification if not previously notified
+      // 5. Send Telegram Notification only if it is a LIVE event (not historical import spam)
+      const receivedAgeMs = Date.now() - new Date(parsedEmail.receivedAt).getTime();
+      const isHistoricalEvent = isInitialHistoricalSync || receivedAgeMs > liveEventMaxAgeMs || options.isBackfill;
+
       if (!processedEventKeys.has(eventKey)) {
         processedEventKeys.add(eventKey);
-        if (allowNotifications) {
+
+        if (!isHistoricalEvent && globalNotificationSetting && !options.suppressNotifications) {
           await dispatchTelegramEvent(config, evidence, matchResult, classificationResult);
         }
       }
@@ -126,7 +169,7 @@ export async function syncGmailForProfile(config = {}, options = {}) {
   return { ok: true, eventsProcessed: newEventsCount };
 }
 
-function buildTargetedQuery(config = {}) {
+function buildTargetedQuery(config = {}, isInitialSync = false) {
   const allowedSenders = config.gmailAllowedSenders || process.env.GMAIL_ALLOWED_SENDERS || 'bruntwork, bruntwork.co, bruntwork.com';
   const sendersList = allowedSenders.split(',').map(s => s.trim()).filter(Boolean);
 
@@ -134,10 +177,14 @@ function buildTargetedQuery(config = {}) {
     ? `from:(${sendersList.join(' OR ')})`
     : 'from:(bruntwork OR bruntwork.co OR bruntwork.com)';
 
-  return `${senderQuery} newer_than:45d`;
+  const lookbackDays = isInitialSync
+    ? (Number.parseInt(config.gmailInitialLookbackDays ?? process.env.GMAIL_INITIAL_LOOKBACK_DAYS, 10) || 180)
+    : (Number.parseInt(config.gmailLiveLookbackDays ?? process.env.GMAIL_LIVE_LOOKBACK_DAYS, 10) || 7);
+
+  return `${senderQuery} newer_than:${lookbackDays}d`;
 }
 
-async function updateJobLifecycleRecord(config, jobRecord, evidence) {
+export async function updateJobLifecycleRecord(config, jobRecord, evidence) {
   const store = await loadJobStore(config);
   const targetIndex = store.jobs.findIndex(j => j.job_hash === jobRecord.job_hash);
 
@@ -149,12 +196,34 @@ async function updateJobLifecycleRecord(config, jobRecord, evidence) {
       events.push(evidence);
     }
 
-    const nextLifecycleStatus = mapClassificationToLifecycleStatus(evidence.classification, job.lifecycleStatus || job.status);
+    const currentStatus = job.lifecycleStatus || job.status || 'applied';
+    const nextStatus = resolveMonotonicLifecycleStatus(evidence.classification, currentStatus);
+
+    // Update granular lifecycle timestamps
+    const timestamps = { ...(job.lifecycleTimestamps || {}) };
+    const eventTime = evidence.receivedAt || new Date().toISOString();
+
+    if (evidence.classification === EmailEventType.APPLICATION_CONFIRMATION && !timestamps.applicationConfirmedAt) {
+      timestamps.applicationConfirmedAt = eventTime;
+    } else if (evidence.classification === EmailEventType.RECRUITER_RESPONSE && !timestamps.recruiterResponseAt) {
+      timestamps.recruiterResponseAt = eventTime;
+    } else if (evidence.classification === EmailEventType.ASSESSMENT && !timestamps.assessmentRequestedAt) {
+      timestamps.assessmentRequestedAt = eventTime;
+    } else if (evidence.classification === EmailEventType.RECRUITER_INTERVIEW && !timestamps.recruiterInterviewInvitedAt) {
+      timestamps.recruiterInterviewInvitedAt = eventTime;
+    } else if (evidence.classification === EmailEventType.CLIENT_INTERVIEW && !timestamps.clientInterviewInvitedAt) {
+      timestamps.clientInterviewInvitedAt = eventTime;
+    } else if (evidence.classification === EmailEventType.OFFER && !timestamps.offerAt) {
+      timestamps.offerAt = eventTime;
+    } else if (evidence.classification === EmailEventType.REJECTION && !timestamps.rejectedAt) {
+      timestamps.rejectedAt = eventTime;
+    }
 
     store.jobs[targetIndex] = {
       ...job,
-      lifecycleStatus: nextLifecycleStatus,
+      lifecycleStatus: nextStatus,
       lifecycleEvents: events,
+      lifecycleTimestamps: timestamps,
       lastEmailEventAt: evidence.receivedAt,
       interviewDetails: evidence.interviewDetails || job.interviewDetails || null,
       updatedAt: new Date().toISOString()
@@ -162,6 +231,20 @@ async function updateJobLifecycleRecord(config, jobRecord, evidence) {
 
     await saveJobStore(config, store);
   }
+}
+
+export function resolveMonotonicLifecycleStatus(classification, currentStatus = 'applied') {
+  const mappedStatus = mapClassificationToLifecycleStatus(classification, currentStatus);
+  const currentRank = LIFECYCLE_STAGE_RANK[currentStatus] ?? 0;
+  const newRank = LIFECYCLE_STAGE_RANK[mappedStatus] ?? 0;
+
+  // Rejections and offers can transition from any non-terminal stage
+  if (mappedStatus === 'rejected' || mappedStatus === 'offer' || mappedStatus === 'hired') {
+    return mappedStatus;
+  }
+
+  // If new event is higher in funnel, advance; otherwise preserve the advanced current state
+  return newRank >= currentRank ? mappedStatus : currentStatus;
 }
 
 function mapClassificationToLifecycleStatus(classification, currentStatus) {

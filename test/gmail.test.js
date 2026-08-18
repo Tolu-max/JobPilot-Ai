@@ -226,3 +226,41 @@ test('Security & Secrets: Doctor check and diagnostics never expose raw refresh 
   assert.equal(gmailCheck.status, 'pass');
   assert.equal(gmailCheck.detail.includes(secretRefreshToken), false, 'Check detail must not contain token');
 });
+
+test('Lifecycle Monotonicity: Older historical events never downgrade advanced application state', async () => {
+  const { resolveMonotonicLifecycleStatus } = await import('../src/gmail/gmailSync.js');
+
+  // Normal advancement
+  assert.equal(resolveMonotonicLifecycleStatus(EmailEventType.APPLICATION_CONFIRMATION, 'applied'), 'application_confirmed');
+  assert.equal(resolveMonotonicLifecycleStatus(EmailEventType.RECRUITER_INTERVIEW, 'application_confirmed'), 'recruiter_interview_invited');
+  assert.equal(resolveMonotonicLifecycleStatus(EmailEventType.CLIENT_INTERVIEW, 'recruiter_interview_invited'), 'client_interview_invited');
+
+  // Prevent downgrade
+  assert.equal(resolveMonotonicLifecycleStatus(EmailEventType.RECRUITER_RESPONSE, 'client_interview_invited'), 'client_interview_invited');
+  assert.equal(resolveMonotonicLifecycleStatus(EmailEventType.APPLICATION_CONFIRMATION, 'recruiter_interview_invited'), 'recruiter_interview_invited');
+  assert.equal(resolveMonotonicLifecycleStatus(EmailEventType.RECRUITER_INTERVIEW, 'client_interview_invited'), 'client_interview_invited');
+
+  // Terminal states always take effect
+  assert.equal(resolveMonotonicLifecycleStatus(EmailEventType.REJECTION, 'client_interview_invited'), 'rejected');
+  assert.equal(resolveMonotonicLifecycleStatus(EmailEventType.OFFER, 'client_interview_invited'), 'offer');
+});
+
+test('Automated Worker Sync: isGmailSyncDue calculates intervals accurately', async () => {
+  const { isGmailSyncDue } = await import('../src/gmail/gmailSync.js');
+  const config = buildConfig(['node', 'jobpilot', '--profile=tolu']);
+
+  // If sync interval is large and last sync was just now, should not be due
+  const due = await isGmailSyncDue({
+    ...config,
+    gmailSyncIntervalMs: 6000000 // 100 minutes
+  });
+  // Since we ran sync moments ago, it should not be due
+  assert.equal(due, false);
+
+  // If interval is 0, should be due immediately
+  const dueImmediately = await isGmailSyncDue({
+    ...config,
+    gmailSyncIntervalMs: 0
+  });
+  assert.equal(dueImmediately, true);
+});

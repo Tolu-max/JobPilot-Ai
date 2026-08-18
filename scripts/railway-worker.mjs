@@ -4,8 +4,10 @@ import path from 'node:path';
 import { buildConfig } from '../src/config.js';
 import { startTelegramPolling } from '../src/telegramBot.js';
 import { registerRunner } from '../src/botControl.js';
+import { syncGmailForProfile, isGmailSyncDue } from '../src/gmail/gmailSync.js';
 
 let activeRunPromise = null;
+const activeGmailSyncProfiles = new Set();
 
 const delayMs = Number.parseInt(process.env.WORKER_RESTART_DELAY_MS || '900000', 10);
 const reprocessProfiles = new Set(
@@ -187,17 +189,46 @@ async function runProfilesIndividually() {
     console.log(`[worker] ${profile} run exited code=${lastResult.code ?? 'null'} signal=${lastResult.signal || 'none'}`);
     reprocessedProfile ||= reprocess;
 
-    // Incremental Gmail sync for profile
-    try {
-      const { syncGmailForProfile } = await import('../src/gmail/gmailSync.js');
-      const profileConfig = buildConfig([process.execPath, 'jobpilot', `--profile=${profile}`]);
-      await syncGmailForProfile(profileConfig);
-    } catch (err) {
-      console.warn(`[worker] Gmail sync skipped for ${profile}: ${err.message}`);
-    }
+    // Automated non-overlapping incremental Gmail sync for profile
+    await runAutomatedGmailSync(profile);
   }
 
   return { ...lastResult, reprocessedProfile };
+}
+
+export async function runAutomatedGmailSync(profileName = '') {
+  const profile = String(profileName).trim().toLowerCase();
+  if (!profile) return { ok: false, skipped: true };
+
+  if (activeGmailSyncProfiles.has(profile)) {
+    console.log(`[worker] [gmailSync] Sync already in progress for ${profile}; skipping overlapping run.`);
+    return { ok: true, skipped: true, reason: 'concurrency_lock' };
+  }
+
+  activeGmailSyncProfiles.add(profile);
+  try {
+    const profileConfig = buildConfig([process.execPath, 'jobpilot', `--profile=${profile}`]);
+    const due = await isGmailSyncDue(profileConfig);
+    if (!due) {
+      return { ok: true, skipped: true, reason: 'not_due' };
+    }
+
+    console.log(`[worker] [gmailSync] Starting automated Gmail sync for profile: ${profile}...`);
+    const result = await syncGmailForProfile(profileConfig);
+    if (result?.skipped) {
+      console.log(`[worker] [gmailSync] Profile ${profile}: ${result.reason || 'skipped'}`);
+    } else if (result?.ok) {
+      console.log(`[worker] [gmailSync] Profile ${profile} completed: ${result.eventsProcessed ?? 0} event(s) processed.`);
+    } else if (result?.error) {
+      console.warn(`[worker] [gmailSync] Profile ${profile} error: ${result.error}`);
+    }
+    return result;
+  } catch (err) {
+    console.warn(`[worker] [gmailSync] Unexpected failure for ${profile}: ${err.message}`);
+    return { ok: false, error: err.message };
+  } finally {
+    activeGmailSyncProfiles.delete(profile);
+  }
 }
 
 async function fileExists(filePath) {
