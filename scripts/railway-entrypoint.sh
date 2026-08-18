@@ -42,9 +42,12 @@ link_volume_dir debug
 link_volume_dir browser-profiles
 link_volume_dir test-results
 
-# Stale lock directories can survive a crash and then fail hard when the
-# volume is tight. Remove only generated lock dirs, never profile documents.
+# Stale lock directories and bloated debug/backup files
 find /app/data -name '*.lock' -type d -prune -exec rm -rf {} + 2>/dev/null || true
+find /app/data -name '*.backup-*' -type f -delete 2>/dev/null || true
+find /app/data/debug -type f -delete 2>/dev/null || true
+find /app/data/test-results -type f -delete 2>/dev/null || true
+find /app/data/browser-profiles -type f -name '*.log' -delete 2>/dev/null || true
 
 if [ -n "${PROFILE_BUNDLE_URL:-}" ]; then
   echo "[bootstrap] PROFILE_BUNDLE_URL is set. Downloading profiles bundle..."
