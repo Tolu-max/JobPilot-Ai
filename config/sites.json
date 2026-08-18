@@ -174,11 +174,11 @@
     "_disabled_reason": "Temporarily paused while source freshness and application delivery are being improved."
   },
   "myjobmag": {
-    "enabled": true,
+    "enabled": false,
     "priority": 150,
     "maxJobsPerRun": 20,
     "cooldownMinutes": 1,
-    "autoApplyEnabled": true,
+    "autoApplyEnabled": false,
     "_disabled_reason": "Planned scraper; not implemented yet"
   },
   "betternship": {

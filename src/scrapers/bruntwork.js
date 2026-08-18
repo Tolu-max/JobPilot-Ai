@@ -22,7 +22,10 @@ export class BruntWorkScraper extends BaseScraper {
     // performs profile/global dedupe after scraping; limiting here can cause a
     // page of already-processed jobs to mask newer jobs immediately behind it.
     const scanLimit = resolveDetailScanLimit(this.siteConfig, limit);
-    const limitedJobLinks = scanLimit > 0 ? unseenLinks.slice(0, scanLimit) : unseenLinks;
+    const candidateLinks = unseenLinks.length > 0
+      ? unseenLinks
+      : jobLinks;
+    const limitedJobLinks = scanLimit > 0 ? candidateLinks.slice(0, scanLimit) : candidateLinks;
     const jobs = [];
     const failed = [];
     const concurrency = resolveDetailConcurrency(this.siteConfig);
