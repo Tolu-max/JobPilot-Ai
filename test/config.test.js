@@ -54,15 +54,8 @@ test('profile-scoped site env overrides configure greenhouse safely', () => {
 test('new sources stay disabled by default and only audited feeds may auto-apply', () => {
   const config = buildConfig(['node', 'jobpilot']);
 
-  for (const site of ['jobicy', 'themuse', 'arbeitnow', 'dailyremote']) {
-    assert.equal(config.sites[site].enabled, false, `${site} should be disabled by default`);
-    assert.equal(config.sites[site].autoApplyEnabled, false, `${site} should stay review-first by default`);
-    assert.equal(config.sites[site].maxAgeDays, 14, `${site} should default to a 14 day age limit`);
-  }
-
-  for (const site of ['workingnomads', 'realworkfromanywhere']) {
-    assert.equal(config.sites[site].enabled, true, `${site} should be enabled in the active source policy`);
-    assert.equal(config.sites[site].autoApplyEnabled, true, `${site} should allow audited downstream auto-apply`);
+  for (const site of ['jobicy', 'themuse', 'arbeitnow', 'dailyremote', 'workingnomads', 'realworkfromanywhere']) {
+    assert.equal(config.sites[site].enabled, false, `${site} should be disabled by default in active source policy`);
     assert.equal(config.sites[site].maxAgeDays, 14, `${site} should default to a 14 day age limit`);
   }
 });

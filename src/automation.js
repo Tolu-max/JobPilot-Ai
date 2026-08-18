@@ -16,6 +16,7 @@ import { getStealthScript, stealthArgs, stealthUserAgent } from './stealthInit.j
 import { getPlaywrightProxy, markProxyBad } from './proxyRotator.js';
 import { getAdapter } from './adapters/index.js';
 import { FormStep, Proof } from './adapters/types.js';
+import { selectResumeForJob } from './resumeSelector.js';
 import {
   buildGroundedFallbackAnswer,
   cleanApplicationAnswer,
@@ -27,6 +28,9 @@ export async function attemptApplication(job, coverLetter, config) {
   const lifecycle = createApplicationLifecycle(job);
   transitionApplicationState(lifecycle, ApplicationState.SCORED, 'Job passed scoring.');
   transitionApplicationState(lifecycle, ApplicationState.SELECTED_FOR_APPLICATION, 'Job selected for application.');
+
+  const selectedResume = selectResumeForJob(config, job);
+  console.log(`[resumeSelector] candidate=${config.profileName} | job="${job.title}" | selectedProfile=${selectedResume.profileId} | path=${selectedResume.resumePath} | reason="${selectedResume.selectionReason}"`);
 
   const debug = createDebugCollector(job, config);
 
@@ -51,7 +55,7 @@ export async function attemptApplication(job, coverLetter, config) {
     return resultFromLifecycle(lifecycle, debug);
   }
 
-  const preflight = await validateAutoApplyConfig(config);
+  const preflight = await validateAutoApplyConfig(config, selectedResume);
   if (!preflight.ok) {
     finalizeApplication(lifecycle, ApplicationState.FAILED, preflight.reason);
     await writeLifecycle(debug, lifecycle);
@@ -134,6 +138,7 @@ export async function attemptApplication(job, coverLetter, config) {
         coverLetterText,
         applicationAnswers,
         job,
+        selectedResume,
         debug,
         lifecycle
       });
@@ -141,7 +146,7 @@ export async function attemptApplication(job, coverLetter, config) {
       return adapterResult;
     }
 
-    const formNav = await navigateMultiStepForm(page, config, coverLetterText, applicationAnswers, job, debug);
+    const formNav = await navigateMultiStepForm(page, config, coverLetterText, applicationAnswers, job, debug, selectedResume);
     transitionApplicationState(lifecycle, ApplicationState.FORM_FILLED, 'Application form fields were filled.');
     await saveDebugArtifacts(page, debug, '06-before-submit');
 
@@ -215,11 +220,13 @@ export async function attemptApplication(job, coverLetter, config) {
 
 // --- Site-specific adapter flow (replaces navigateMultiStepForm + submitAndConfirm for known sites) ---
 
-async function runSiteAdapterFlow({ adapter, page, config, coverLetterText, applicationAnswers, job, debug, lifecycle }) {
+async function runSiteAdapterFlow({ adapter, page, config, coverLetterText, applicationAnswers, job, selectedResume, debug, lifecycle }) {
+  const effectiveResumePath = selectedResume?.resumePath || config.resumePath;
   const ctx = {
     config,
     candidate: config.cvData || {},
-    resumePath: config.resumePath,
+    resumePath: effectiveResumePath,
+    selectedResumeProfile: selectedResume?.profileId,
     coverLetter: coverLetterText,
     answers: applicationAnswers,
     job,
@@ -769,7 +776,8 @@ async function waitForStepTransition(page, beforeFormHtml) {
   return { transitioned: false };
 }
 
-async function navigateMultiStepForm(page, config, coverLetterText, applicationAnswers, job, debug) {
+async function navigateMultiStepForm(page, config, coverLetterText, applicationAnswers, job, debug, selectedResume = null) {
+  const effectiveResumePath = selectedResume?.resumePath || config.resumePath;
   const MAX_STEPS = 10;
   let stuckCount = 0;
 
@@ -783,7 +791,7 @@ async function navigateMultiStepForm(page, config, coverLetterText, applicationA
     // Fill all fields visible at this step
     await fillPersonalDetails(page, config);
     await fillEmail(page, config.applicantEmail, config);
-    await uploadResume(page, config.resumePath, config, step);
+    await uploadResume(page, effectiveResumePath, config, step);
     await fillCoverLetter(page, coverLetterText, config);
     await fillKnownQuestionAnswers(page, applicationAnswers, config, job);
     await fillSelectDropdowns(page, applicationAnswers, config, job);
@@ -1042,7 +1050,7 @@ async function waitForPostSubmitSettling(page) {
   await page.waitForTimeout(1000);
 }
 
-async function validateAutoApplyConfig(config) {
+async function validateAutoApplyConfig(config, selectedResume = null) {
   if (!config.applicantEmail) return { ok: false, reason: 'Missing APPLICANT_EMAIL.' };
   if (config.resumePlaceholder) {
     return {
@@ -1050,10 +1058,11 @@ async function validateAutoApplyConfig(config) {
       reason: `Profile ${config.profileName} uses a placeholder resume. Replace ${config.resumePath} before auto-apply.`
     };
   }
+  const effectiveResumePath = selectedResume?.resumePath || config.resumePath;
   try {
-    await fs.access(config.resumePath);
+    await fs.access(effectiveResumePath);
   } catch {
-    return { ok: false, reason: `Resume not found at ${config.resumePath}.` };
+    return { ok: false, reason: `Resume not found at ${effectiveResumePath}.` };
   }
   return { ok: true };
 }

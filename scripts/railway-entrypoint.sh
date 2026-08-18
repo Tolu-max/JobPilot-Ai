@@ -83,6 +83,11 @@ if [ "${WIPE_DB:-}" = "true" ]; then
   node clearIgnored.js
 fi
 
+if [ -f "./scripts/build-resume-library.mjs" ]; then
+  echo "[bootstrap] Ensuring fixed resume library is compiled..."
+  node ./scripts/build-resume-library.mjs 2>&1 || true
+fi
+
 for item_profile in ${PROFILES:-}; do
   item_profile="${item_profile//,/ }"
   for name in $item_profile; do

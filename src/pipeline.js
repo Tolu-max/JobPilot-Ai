@@ -25,6 +25,7 @@ import { hasAvailableAiProvider } from './aiRouter.js';
 import { syncJobApplicationsBatch } from './jobApplicationSync.js';
 import { syncJobApplicationsToSQLite } from './sqliteSync.js';
 import { pullDashboardApprovals } from './dashboardSync.js';
+import { selectResumeForJob } from './resumeSelector.js';
 
 export async function runJobHunt(config, options = {}) {
   resetReviewNotifCount();
@@ -804,6 +805,8 @@ export function getAiConsiderationFloor(config = {}) {
 }
 
 async function attemptApplicationOnce(job, appPackage, config) {
+  const selectedResume = selectResumeForJob(config, job);
+  await appendLog(`Resume profile selected: ${selectedResume.profileId} (${selectedResume.resumePath}) for "${job.title}" — Reason: ${selectedResume.selectionReason}`, config);
   const result = await attemptApplication(job, appPackage, config);
   if (String(job.source_site || job.source || '').toLowerCase() === 'bruntwork' && result.outcome !== ApplicationOutcome.APPLIED_SUCCESSFULLY) {
     return {
