@@ -111,6 +111,7 @@ export async function upsertJobRecord(config, job, status, details = {}) {
     const record = {
       job_hash: jobHash,
       source_site: job.source_site || job.source || 'unknown',
+      sourceJobId: job.sourceJobId || details.sourceJobId || '',
       job_url: job.applicationUrl,
       title: job.title,
       company: job.company || '',

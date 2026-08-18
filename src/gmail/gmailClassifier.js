@@ -71,6 +71,7 @@ export function classifyDeterministic(parsedEmail = {}) {
   const text = `${subject}\n\n${body}`;
 
   // 1. REJECTION signals (check first or high weight to avoid misinterpreting polite rejection phrasing)
+  const isRejectionSubject = /^rejection\b/i.test(subject) || /unsuccessful/i.test(subject);
   const rejectionPatterns = [
     /unfortunately/i,
     /not (?:moving|proceeding) forward/i,
@@ -82,25 +83,42 @@ export function classifyDeterministic(parsedEmail = {}) {
     /regret to inform you/i,
     /not selected for (?:this|the) (?:role|position)/i,
     /we won't be moving forward/i,
-    /other applicants whose skills and experience more closely align/i
+    /other applicants whose skills and experience more closely align/i,
+    /time, thought, and effort you put into the application and interview process/i
   ];
 
-  for (const pattern of rejectionPatterns) {
-    if (pattern.test(text)) {
-      return {
-        classification: EmailEventType.REJECTION,
-        confidence: 0.95,
-        reason: `Matched rejection pattern: "${pattern.source}"`
-      };
-    }
+  if (isRejectionSubject || rejectionPatterns.some(p => p.test(text))) {
+    return {
+      classification: EmailEventType.REJECTION,
+      confidence: 0.95,
+      reason: 'Matched rejection patterns'
+    };
   }
 
-  // 2. OFFER signals
+  // 2. APPLICATION CONFIRMATION signals (Check before interview to prevent "What Happens Next" boilerplate matching)
+  const isConfirmationSubject = /application confirmation/i.test(subject) || /application received/i.test(subject);
+  const confirmationPatterns = [
+    /we(?:'ve| have)? received your application/i,
+    /thank you for (?:applying|your application|submitting your application)/i,
+    /application (?:received|confirmation|submitted successfully)/i,
+    /we received your submission/i,
+    /your application to .* has been received/i
+  ];
+
+  if (isConfirmationSubject || confirmationPatterns.some(p => p.test(text))) {
+    return {
+      classification: EmailEventType.APPLICATION_CONFIRMATION,
+      confidence: 0.95,
+      reason: 'Matched application confirmation pattern'
+    };
+  }
+
+  // 3. OFFER signals
   const offerPatterns = [
     /offer of employment/i,
-    /job offer/i,
+    /\bjob offer\b/i,
     /pleased to offer you the (?:position|role)/i,
-    /offer letter/i,
+    /\boffer letter\b/i,
     /employment agreement/i,
     /welcome to the team/i,
     /congratulations on your offer/i
@@ -116,14 +134,14 @@ export function classifyDeterministic(parsedEmail = {}) {
     }
   }
 
-  // 3. CLIENT INTERVIEW signals
+  // 4. CLIENT INTERVIEW signals (Must have explicit client interview language)
   const clientInterviewPatterns = [
-    /client interview/i,
-    /interview with (?:the|our) client/i,
-    /meet (?:with )?(?:the|our) client/i,
-    /client round/i,
-    /client meeting/i,
-    /client team interview/i
+    /client interview\b/i,
+    /interview with (?:the|our) client\b/i,
+    /meet (?:with )?(?:the|our) client\b/i,
+    /client round\b/i,
+    /client meeting\b/i,
+    /client team interview\b/i
   ];
 
   for (const pattern of clientInterviewPatterns) {
@@ -136,18 +154,19 @@ export function classifyDeterministic(parsedEmail = {}) {
     }
   }
 
-  // 4. RECRUITER INTERVIEW / GENERAL INTERVIEW signals
+  // 5. RECRUITER INTERVIEW / EXPLICIT INTERVIEW INVITATION signals
+  // Strict check: must be an explicit invitation or scheduling action, NOT conditional boilerplate
   const recruiterInterviewPatterns = [
-    /invitation to interview/i,
-    /schedule (?:an?|your) interview/i,
-    /interview (?:invitation|scheduled|details)/i,
-    /book (?:a|your) (?:call|interview|screening|slot)/i,
-    /calendly\.com/i,
-    /initial screen(?:ing)?/i,
-    /recruiter (?:screen|call|interview)/i,
-    /would like to invite you (?:for|to) an? (?:interview|call|discussion)/i,
-    /availability for a (?:brief|quick|30-minute|short) (?:call|interview|chat)/i,
-    /meet\.google\.com|zoom\.us\/j|teams\.microsoft\.com/i
+    /invitation to interview\b/i,
+    /invite you (?:for|to) an? (?:interview|initial screen|call)\b/i,
+    /schedule (?:an?|your) interview\b/i,
+    /interview (?:has been )?scheduled for\b/i,
+    /book (?:a|your) (?:call|interview|screening|slot)\b/i,
+    /calendly\.com\/[a-zA-Z0-9-_/]+/i,
+    /initial screen(?:ing)? call\b/i,
+    /recruiter (?:screen|call|interview)\b/i,
+    /would like to invite you (?:for|to) an? (?:interview|call|discussion)\b/i,
+    /availability for a (?:brief|quick|30-minute|short) (?:call|interview|chat)\b/i
   ];
 
   for (const pattern of recruiterInterviewPatterns) {
@@ -160,7 +179,7 @@ export function classifyDeterministic(parsedEmail = {}) {
     }
   }
 
-  // 5. ASSESSMENT signals
+  // 6. ASSESSMENT signals
   const assessmentPatterns = [
     /skills? assessment/i,
     /technical (?:test|assessment|challenge)/i,
@@ -180,39 +199,24 @@ export function classifyDeterministic(parsedEmail = {}) {
     }
   }
 
-  // 6. APPLICATION CONFIRMATION signals
-  const confirmationPatterns = [
-    /thank you for (?:applying|your application|submitting your application)/i,
-    /we (?:have )?received your application/i,
-    /application (?:received|confirmation|submitted successfully)/i,
-    /we received your submission/i,
-    /your application to .* has been received/i
-  ];
-
-  for (const pattern of confirmationPatterns) {
-    if (pattern.test(text)) {
-      return {
-        classification: EmailEventType.APPLICATION_CONFIRMATION,
-        confidence: 0.95,
-        reason: `Matched application confirmation pattern: "${pattern.source}"`
-      };
-    }
-  }
-
-  // 7. GENERAL RECRUITER RESPONSE
+  // 7. RECRUITER RESPONSE / GENERAL APPLICATION UPDATE
   const generalResponsePatterns = [
+    /^update on your application\b/i,
+    /^application update\b/i,
     /reviewed your application/i,
     /regarding your application/i,
     /application status update/i,
-    /update on your application/i,
-    /following up on your application/i
+    /following up on your application/i,
+    /interest in the role/i,
+    /we've received strong interest/i,
+    /under review/i
   ];
 
   for (const pattern of generalResponsePatterns) {
     if (pattern.test(text)) {
       return {
         classification: EmailEventType.RECRUITER_RESPONSE,
-        confidence: 0.80,
+        confidence: 0.85,
         reason: `Matched recruiter response pattern: "${pattern.source}"`
       };
     }
@@ -239,34 +243,35 @@ export function extractInterviewDetails(parsedEmail = {}) {
     meetingUrl = meetingUrlMatch[0];
   }
 
-  // 2. Platform identification
-  let platform = 'Other / Unknown';
-  if (/zoom\.us/i.test(meetingUrl) || /zoom/i.test(text)) platform = 'Zoom';
-  else if (/meet\.google\.com/i.test(meetingUrl) || /google meet/i.test(text)) platform = 'Google Meet';
-  else if (/teams\.microsoft\.com/i.test(meetingUrl) || /microsoft teams/i.test(text)) platform = 'Microsoft Teams';
-  else if (/calendly\.com/i.test(meetingUrl) || /calendly/i.test(text)) platform = 'Calendly';
+  // 2. Platform identification (only if explicit platform URL/keyword is present)
+  let platform = null;
+  if (/zoom\.us/i.test(meetingUrl) || /\bzoom meeting\b/i.test(text)) platform = 'Zoom';
+  else if (/meet\.google\.com/i.test(meetingUrl) || /\bgoogle meet\b/i.test(text)) platform = 'Google Meet';
+  else if (/teams\.microsoft\.com/i.test(meetingUrl) || /\bmicrosoft teams\b/i.test(text)) platform = 'Microsoft Teams';
+  else if (/calendly\.com/i.test(meetingUrl) || /\bcalendly\b/i.test(text)) platform = 'Calendly';
+  else if (/\bphone call\b|\bphone interview\b/i.test(text)) platform = 'Phone';
 
   // 3. Date / Time extraction
-  let scheduledAt = '';
-  let timezone = '';
+  let scheduledAt = null;
+  let timezone = null;
 
   const tzMatch = text.match(/\b(EST|EDT|PST|PDT|CST|CDT|GMT|UTC|WAT|BST|CET|CEST|AEST|AEDT)\b/i);
   if (tzMatch) {
     timezone = tzMatch[1].toUpperCase();
   }
 
-  // Look for date patterns like "Monday, August 25 at 3:00 PM" or "2026-08-25 14:00"
+  // Look for date patterns like "Monday, August 25 at 3:00 PM"
   const dateMatch = text.match(/\b(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)?,?\s*(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+\d{1,2}(?:st|nd|rd|th)?,?\s*(?:20\d{2})?(?:\s+(?:at|@)\s+\d{1,2}(?::\d{2})?\s*(?:AM|PM)?)?/i);
   if (dateMatch) {
     scheduledAt = dateMatch[0].trim();
   }
 
   // 4. Interviewer extraction
-  let interviewer = parsedEmail.senderName || '';
+  let interviewer = parsedEmail.senderName || null;
 
   return {
     platform,
-    meetingUrl,
+    meetingUrl: meetingUrl || null,
     scheduledAt,
     timezone,
     interviewer

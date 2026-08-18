@@ -29,6 +29,10 @@ export function parseGmailMessage(rawMessage = {}) {
   const { senderEmail, senderName } = parseSender(fromRaw);
   const bodyText = extractBodyText(rawMessage.payload);
   const snippet = rawMessage.snippet || '';
+  const normalizedBody = normalizeEmailText(bodyText || snippet);
+
+  const extractedRoleTitle = extractRoleTitle(subject, normalizedBody);
+  const extractedJobId = extractJobId(subject, normalizedBody);
 
   return {
     id,
@@ -44,9 +48,88 @@ export function parseGmailMessage(rawMessage = {}) {
     to: toRaw,
     subject: compactText(subject),
     snippet: compactText(snippet),
-    bodyText: normalizeEmailText(bodyText || snippet),
+    bodyText: normalizedBody,
+    extractedRoleTitle,
+    extractedJobId,
     rawLabels: rawMessage.labelIds || []
   };
+}
+
+export function extractRoleTitle(subject = '', bodyText = '') {
+  const cleanSubject = compactText(subject);
+
+  // 1. Subject extraction patterns
+  const subjectPatterns = [
+    /(.+?)\s*[-–—|]\s*Application Confirmation/i,
+    /Application Confirmation:\s*(.+)/i,
+    /Update on Your Application for the (.+)/i,
+    /Update on Your Application for (.+)/i,
+    /Application Update for the (.+)/i,
+    /Application Update for (.+)/i,
+    /Application Update:\s*(.+)/i,
+    /Your Application for the (.+)/i,
+    /Your Application for (.+)/i,
+    /Your application to (.+)/i,
+    /Rejection:\s*(.+)/i,
+    /Job Offer:\s*(.+)/i,
+    /Client Interview:\s*(.+)/i,
+    /Interview Invitation:\s*(.+)/i
+  ];
+
+  for (const pattern of subjectPatterns) {
+    const match = cleanSubject.match(pattern);
+    if (match && match[1]) {
+      const extracted = cleanExtractedRole(match[1]);
+      if (extracted) return extracted;
+    }
+  }
+
+  // 2. Body extraction patterns (BruntWork body patterns)
+  const bodyPatterns = [
+    /the job opening,\s*([^,\n]+?)\s+with the job ID number\s*(\d+)/i,
+    /interest in the role:\s*([^\n\r.]+)/i,
+    /application for the position of\s*([^\n\r.]+)/i,
+    /application for the role of\s*([^\n\r.]+)/i,
+    /application for the\s*([^\n\r.]+)\s+role/i,
+    /application for\s*([^\n\r.]+)\s+at BruntWork/i
+  ];
+
+  for (const pattern of bodyPatterns) {
+    const match = bodyText.match(pattern);
+    if (match && match[1]) {
+      const extracted = cleanExtractedRole(match[1]);
+      if (extracted) return extracted;
+    }
+  }
+
+  return '';
+}
+
+export function extractJobId(subject = '', bodyText = '') {
+  const combined = `${subject}\n${bodyText}`;
+  const patterns = [
+    /with the job ID number\s*(\d+)/i,
+    /job ID number\s*[:#]?\s*(\d+)/i,
+    /job ID\s*[:#]?\s*(\d+)/i,
+    /job\s*#\s*(\d+)/i
+  ];
+
+  for (const pattern of patterns) {
+    const match = combined.match(pattern);
+    if (match && match[1]) {
+      return match[1].trim();
+    }
+  }
+
+  return '';
+}
+
+function cleanExtractedRole(roleStr = '') {
+  let role = compactText(roleStr);
+  // Strip trailing company or punctuation
+  role = role.replace(/[\-–—|]\s*BruntWork.*$/i, '').trim();
+  role = role.replace(/[.,;!?]$/, '').trim();
+  return role;
 }
 
 function parseSender(fromStr = '') {

@@ -12,8 +12,9 @@ import { classifyEmailMessage, EmailEventType } from './gmailClassifier.js';
 import { matchEmailToApplication, MatchConfidenceLevel } from './gmailApplicationMatcher.js';
 import { loadJobStore, saveJobStore } from '../jobStore.js';
 import { sendNotification } from '../notifications.js';
+import { getResumeProfile } from '../resumeLibrary.js';
 
-export async function syncGmailForProfile(config = {}) {
+export async function syncGmailForProfile(config = {}, options = {}) {
   const profileName = String(config.profileName || 'tolu').toLowerCase();
   const profileDir = config.profileDir || path.resolve(process.cwd(), 'profiles', profileName);
   const syncStatePath = path.join(profileDir, 'gmailSyncState.json');
@@ -32,22 +33,27 @@ export async function syncGmailForProfile(config = {}) {
 
   const syncState = await loadSyncState(syncStatePath);
   const processedMessageIds = new Set(syncState.processedMessageIds || []);
+  const processedEventKeys = new Set(syncState.processedEventKeys || []);
 
   // Build targeted search query
   const query = buildTargetedQuery(config);
 
   let searchResult;
   try {
-    searchResult = await client.searchMessages(query, { maxResults: 25 });
+    searchResult = await client.searchMessages(query, { maxResults: 35 });
   } catch (err) {
     console.warn(`[gmailSync] Search failed for ${profileName}: ${err.message}`);
     return { ok: false, error: err.message };
   }
 
-  const messagesToFetch = (searchResult.messages || []).filter(m => !processedMessageIds.has(m.id));
-  console.log(`[gmailSync] Found ${messagesToFetch.length} new messages for profile: ${profileName}`);
+  const allFoundMessages = searchResult.messages || [];
+  const messagesToFetch = allFoundMessages.filter(m => !processedMessageIds.has(m.id));
+  console.log(`[gmailSync] Found ${messagesToFetch.length} new messages (out of ${allFoundMessages.length} total) for profile: ${profileName}`);
 
   let newEventsCount = 0;
+  const allowNotifications = config.gmailBackfillNotifications !== false
+    && process.env.GMAIL_BACKFILL_NOTIFICATIONS !== 'false'
+    && !options.suppressNotifications;
 
   for (const msgMeta of messagesToFetch) {
     try {
@@ -56,19 +62,26 @@ export async function syncGmailForProfile(config = {}) {
 
       // 1. Classify Email
       const classificationResult = await classifyEmailMessage(parsedEmail, config);
+      if (classificationResult.classification === EmailEventType.UNKNOWN) {
+        continue;
+      }
 
       // 2. Match to Application
       const matchResult = await matchEmailToApplication(parsedEmail, config);
 
       // 3. Create Evidence Record
+      const eventKey = `${profileName}:${msgMeta.id}:${classificationResult.classification}`;
       const evidence = {
         eventId: `evt_${Date.now()}_${msgMeta.id.slice(-6)}`,
+        eventKey,
         gmailMessageId: msgMeta.id,
         threadId: parsedEmail.threadId,
         receivedAt: parsedEmail.receivedAt,
         sender: parsedEmail.from,
         senderEmail: parsedEmail.senderEmail,
         subject: parsedEmail.subject,
+        extractedRoleTitle: parsedEmail.extractedRoleTitle || null,
+        extractedJobId: parsedEmail.extractedJobId || null,
         classification: classificationResult.classification,
         classificationConfidence: classificationResult.confidence,
         classificationTier: classificationResult.tier,
@@ -76,17 +89,23 @@ export async function syncGmailForProfile(config = {}) {
         matchConfidence: matchResult.confidence,
         matchedJobTitle: matchResult.jobRecord?.title || null,
         matchedJobHash: matchResult.jobRecord?.job_hash || null,
+        matchedResumeProfile: matchResult.jobRecord?.resumeProfile || null,
         interviewDetails: classificationResult.interviewDetails || null,
         excerpt: (parsedEmail.bodyText || parsedEmail.snippet || '').slice(0, 300)
       };
 
-      // 4. Update Application State if matched
+      // 4. Update Application State in candidate store if matched
       if (matchResult.jobRecord && matchResult.matchConfidenceLevel !== MatchConfidenceLevel.UNMATCHED) {
         await updateJobLifecycleRecord(config, matchResult.jobRecord, evidence);
       }
 
-      // 5. Send Telegram Notification
-      await dispatchTelegramEvent(config, evidence, matchResult, classificationResult);
+      // 5. Send Telegram Notification if not previously notified
+      if (!processedEventKeys.has(eventKey)) {
+        processedEventKeys.add(eventKey);
+        if (allowNotifications) {
+          await dispatchTelegramEvent(config, evidence, matchResult, classificationResult);
+        }
+      }
 
       newEventsCount += 1;
     } catch (err) {
@@ -94,11 +113,13 @@ export async function syncGmailForProfile(config = {}) {
     }
   }
 
-  // Save updated sync checkpoint (keep recent 1000 message IDs to bound disk state)
-  const updatedProcessedList = Array.from(processedMessageIds).slice(-1000);
+  // Save updated sync checkpoint (keep recent 1500 IDs to bound state file)
+  const updatedProcessedList = Array.from(processedMessageIds).slice(-1500);
+  const updatedEventKeyList = Array.from(processedEventKeys).slice(-1500);
   await saveSyncState(syncStatePath, {
     lastSyncAt: new Date().toISOString(),
     processedMessageIds: updatedProcessedList,
+    processedEventKeys: updatedEventKeyList,
     lastEventsCount: newEventsCount
   });
 
@@ -124,7 +145,6 @@ async function updateJobLifecycleRecord(config, jobRecord, evidence) {
     const job = store.jobs[targetIndex];
     const events = Array.isArray(job.lifecycleEvents) ? job.lifecycleEvents : [];
 
-    // Avoid duplicate event inside job record
     if (!events.some(e => e.gmailMessageId === evidence.gmailMessageId)) {
       events.push(evidence);
     }
@@ -170,9 +190,18 @@ async function dispatchTelegramEvent(config, evidence, matchResult, classificati
   if (classification === EmailEventType.UNKNOWN) return;
 
   const candidateName = String(config.profileName || 'Candidate').toUpperCase();
-  const jobTitle = matchResult.jobRecord?.title || 'Unknown Role';
+  const jobTitle = matchResult.jobRecord?.title || evidence.extractedRoleTitle || evidence.subject;
   const company = matchResult.jobRecord?.company || 'BruntWork';
   const confidenceLevel = matchResult.matchConfidenceLevel;
+  const jobId = evidence.extractedJobId || matchResult.jobRecord?.sourceJobId || null;
+
+  // Resolve human-readable resume profile if matched
+  let resumeLabel = null;
+  const resumeProfileId = matchResult.jobRecord?.resumeProfile || evidence.matchedResumeProfile;
+  if (resumeProfileId) {
+    const resProfile = getResumeProfile(config.profileName || 'tolu', resumeProfileId);
+    resumeLabel = resProfile?.title ? `${resProfile.title} (${resumeProfileId})` : resumeProfileId;
+  }
 
   let message = '';
 
@@ -184,36 +213,50 @@ async function dispatchTelegramEvent(config, evidence, matchResult, classificati
       + `*Role:* ${escapeMarkdown(jobTitle)}\n`
       + `*Company:* ${escapeMarkdown(company)}\n`
       + `*Stage:* ${stage}\n`
-      + (interview.scheduledAt ? `*Date/Time:* ${escapeMarkdown(interview.scheduledAt)} ${interview.timezone || ''}\n` : '')
+      + (jobId ? `*Job ID:* \`${escapeMarkdown(jobId)}\`\n` : '')
       + (interview.platform ? `*Platform:* ${escapeMarkdown(interview.platform)}\n` : '')
+      + (interview.scheduledAt ? `*Date/Time:* ${escapeMarkdown(interview.scheduledAt)} ${interview.timezone || ''}\n` : '')
       + (interview.meetingUrl ? `*Meeting Link:* ${interview.meetingUrl}\n` : '')
-      + `*Sender:* ${escapeMarkdown(evidence.sender)}\n`
-      + `*Match Confidence:* ${confidenceLevel}`;
+      + (interview.interviewer ? `*Interviewer:* ${escapeMarkdown(interview.interviewer)}\n` : '')
+      + (resumeLabel ? `*Resume:* ${escapeMarkdown(resumeLabel)}\n` : '')
+      + `*Match:* ${confidenceLevel}`;
   } else if (classification === EmailEventType.OFFER) {
     message = `🎉 *[${candidateName}] JOB OFFER DETECTED*\n\n`
       + `*Role:* ${escapeMarkdown(jobTitle)}\n`
       + `*Company:* ${escapeMarkdown(company)}\n`
+      + `*Stage:* Offer Received\n`
+      + (jobId ? `*Job ID:* \`${escapeMarkdown(jobId)}\`\n` : '')
+      + (resumeLabel ? `*Resume:* ${escapeMarkdown(resumeLabel)}\n` : '')
       + `*Subject:* ${escapeMarkdown(evidence.subject)}\n`
-      + `*Match Confidence:* ${confidenceLevel}`;
+      + `*Match:* ${confidenceLevel}`;
   } else if (classification === EmailEventType.REJECTION) {
-    message = `❌ *[${candidateName}] APPLICATION UPDATE: REJECTION*\n\n`
+    message = `❌ *[${candidateName}] APPLICATION UPDATE*\n\n`
       + `*Role:* ${escapeMarkdown(jobTitle)}\n`
       + `*Company:* ${escapeMarkdown(company)}\n`
-      + `*Reason:* ${escapeMarkdown(evidence.excerpt.slice(0, 150))}\n`
-      + `*Match Confidence:* ${confidenceLevel}`;
+      + `*Stage:* Rejected\n`
+      + (jobId ? `*Job ID:* \`${escapeMarkdown(jobId)}\`\n` : '')
+      + (resumeLabel ? `*Resume:* ${escapeMarkdown(resumeLabel)}\n` : '')
+      + `*Reason:* ${escapeMarkdown(evidence.excerpt.slice(0, 160))}\n`
+      + `*Match:* ${confidenceLevel}`;
   } else if (classification === EmailEventType.ASSESSMENT) {
     message = `📝 *[${candidateName}] ASSESSMENT INVITATION*\n\n`
       + `*Role:* ${escapeMarkdown(jobTitle)}\n`
       + `*Company:* ${escapeMarkdown(company)}\n`
+      + `*Stage:* Skills Assessment\n`
+      + (jobId ? `*Job ID:* \`${escapeMarkdown(jobId)}\`\n` : '')
+      + (resumeLabel ? `*Resume:* ${escapeMarkdown(resumeLabel)}\n` : '')
       + `*Subject:* ${escapeMarkdown(evidence.subject)}\n`
-      + `*Match Confidence:* ${confidenceLevel}`;
-  } else if (confidenceLevel === MatchConfidenceLevel.LOW || confidenceLevel === MatchConfidenceLevel.UNMATCHED) {
-    message = `⚠️ *[${candidateName}] UNMATCHED / AMBIGUOUS EMAIL*\n\n`
-      + `*Sender:* ${escapeMarkdown(evidence.sender)}\n`
-      + `*Subject:* ${escapeMarkdown(evidence.subject)}\n`
-      + `*Event Type:* ${classification}\n`
-      + `*Excerpt:* ${escapeMarkdown(evidence.excerpt.slice(0, 150))}\n`
-      + `*Match Confidence:* ${confidenceLevel}`;
+      + `*Match:* ${confidenceLevel}`;
+  } else if (classification === EmailEventType.RECRUITER_RESPONSE || classification === EmailEventType.APPLICATION_CONFIRMATION) {
+    const stage = classification === EmailEventType.APPLICATION_CONFIRMATION ? 'Application Confirmed' : 'Application Under Review';
+    message = `📬 *[${candidateName}] APPLICATION UPDATE: ${stage.toUpperCase()}*\n\n`
+      + `*Role:* ${escapeMarkdown(jobTitle)}\n`
+      + `*Company:* ${escapeMarkdown(company)}\n`
+      + `*Stage:* ${stage}\n`
+      + (jobId ? `*Job ID:* \`${escapeMarkdown(jobId)}\`\n` : '')
+      + (resumeLabel ? `*Resume:* ${escapeMarkdown(resumeLabel)}\n` : '')
+      + `*Excerpt:* ${escapeMarkdown(evidence.excerpt.slice(0, 160))}\n`
+      + `*Match:* ${confidenceLevel}`;
   }
 
   if (message) {
@@ -235,7 +278,7 @@ async function loadSyncState(filepath) {
     const raw = await fs.readFile(filepath, 'utf8');
     return JSON.parse(raw);
   } catch {
-    return { processedMessageIds: [], lastSyncAt: null };
+    return { processedMessageIds: [], processedEventKeys: [], lastSyncAt: null };
   }
 }
 

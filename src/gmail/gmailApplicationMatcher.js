@@ -17,102 +17,114 @@ export const MatchConfidenceLevel = Object.freeze({
 
 export async function matchEmailToApplication(parsedEmail = {}, config = {}) {
   const store = await loadJobStore(config);
-  const appliedJobs = (store.jobs || []).filter(j => j.status === 'applied' || j.lifecycleStatus);
+  const allJobs = store.jobs || [];
 
-  if (appliedJobs.length === 0) {
+  const extractedRole = parsedEmail.extractedRoleTitle || '';
+  const extractedJobId = parsedEmail.extractedJobId || '';
+
+  if (allJobs.length === 0) {
     return {
       matchConfidenceLevel: MatchConfidenceLevel.UNMATCHED,
       confidence: 0,
       jobRecord: null,
       matchedField: null,
-      reason: 'No applied jobs found in candidate store'
+      extractedRoleTitle: extractedRole,
+      extractedJobId,
+      reason: 'Candidate job store is currently empty'
     };
   }
 
   let bestMatch = null;
   let bestScore = 0;
-  let bestField = null;
-  let bestReason = '';
+  let bestReasons = [];
 
   const emailText = `${parsedEmail.subject || ''} ${parsedEmail.snippet || ''} ${parsedEmail.bodyText || ''}`.toLowerCase();
   const threadId = parsedEmail.threadId;
 
-  for (const job of appliedJobs) {
+  for (const job of allJobs) {
     let score = 0;
-    let matchReasons = [];
+    let reasons = [];
 
-    // Signal 0: Existing thread association (highest confidence)
-    if (threadId && Array.isArray(job.lifecycleEvents)) {
-      const hasThreadEvent = job.lifecycleEvents.some(e => e.threadId === threadId);
-      if (hasThreadEvent) {
-        score += 60;
-        matchReasons.push('Matching Gmail conversation thread');
+    // Priority A: Exact BruntWork / External Job ID match
+    if (extractedJobId) {
+      const isIdInUrl = job.job_url && job.job_url.includes(extractedJobId);
+      const isIdInSourceId = job.sourceJobId && String(job.sourceJobId) === extractedJobId;
+      const isIdInHash = job.job_hash && job.job_hash.includes(extractedJobId);
+
+      if (isIdInUrl || isIdInSourceId || isIdInHash) {
+        score += 95;
+        reasons.push(`Exact Job ID match: ${extractedJobId}`);
       }
     }
 
-    // Signal 1: Direct Job URL in email text
+    // Priority B: Exact URL in email text
     if (job.job_url && emailText.includes(job.job_url.toLowerCase())) {
-      score += 50;
-      matchReasons.push('Exact job URL found in email');
+      score += 90;
+      reasons.push('Exact job URL found in email');
     }
 
-    // Signal 2: Reference ID / Job Hash
-    if (job.job_hash && emailText.includes(job.job_hash.toLowerCase())) {
-      score += 40;
-      matchReasons.push('Job hash / reference ID found in email');
-    }
+    // Priority C: Exact normalized role title match
+    if (extractedRole && job.title) {
+      const normExtracted = normalizeTitleForComparison(extractedRole);
+      const normJob = normalizeTitleForComparison(job.title);
 
-    // Signal 3: Job Title Match
-    const titleScore = calculateTitleMatchScore(job.title, emailText, parsedEmail.subject);
-    if (titleScore > 0) {
-      score += titleScore;
-      matchReasons.push(`Title match score: +${titleScore}`);
-    }
-
-    // Signal 4: Company Match
-    if (job.company) {
-      const companyNorm = job.company.toLowerCase().trim();
-      if (companyNorm && (emailText.includes(companyNorm) || parsedEmail.senderEmail?.includes(companyNorm))) {
-        score += 20;
-        matchReasons.push(`Company match: "${job.company}"`);
+      if (normExtracted === normJob) {
+        score += 85;
+        reasons.push(`Exact role title match: "${job.title}"`);
+      } else if (normExtracted.includes(normJob) || normJob.includes(normExtracted)) {
+        score += 75;
+        reasons.push(`Role title substring match: "${job.title}"`);
+      } else {
+        const wordOverlap = calculateWordOverlap(normExtracted, normJob);
+        if (wordOverlap >= 0.75) {
+          score += 65;
+          reasons.push(`Strong role title similarity (${Math.round(wordOverlap * 100)}%): "${job.title}"`);
+        } else if (wordOverlap >= 0.5) {
+          score += 35;
+          reasons.push(`Partial role title similarity: "${job.title}"`);
+        }
+      }
+    } else if (job.title) {
+      // Fallback title matching against subject / email text
+      const titleScore = calculateRawTitleMatchScore(job.title, emailText, parsedEmail.subject);
+      if (titleScore > 0) {
+        score += titleScore;
+        reasons.push(`Subject/text title match score: +${titleScore}`);
       }
     }
 
-    // Signal 5: Bruntwork Source alignment
-    const isBruntworkSender = /bruntwork|brunt/i.test(parsedEmail.senderEmail || '') || /bruntwork/i.test(parsedEmail.from || '');
-    const isBruntworkJob = String(job.source_site || '').toLowerCase() === 'bruntwork';
+    // Priority D: Company match
+    const isBruntworkSender = /bruntwork/i.test(parsedEmail.senderEmail || '') || /bruntwork/i.test(parsedEmail.from || '');
+    const isBruntworkJob = String(job.source_site || '').toLowerCase() === 'bruntwork' || /bruntwork/i.test(job.company || '');
     if (isBruntworkSender && isBruntworkJob) {
       score += 15;
-      matchReasons.push('BruntWork sender matched BruntWork applied role');
+      reasons.push('BruntWork company alignment');
     }
 
-    // Signal 6: Date order check (email should arrive on or after job creation/application)
-    if (job.appliedAt || job.createdAt) {
-      const appliedTime = new Date(job.appliedAt || job.createdAt).getTime();
-      const emailTime = new Date(parsedEmail.receivedAt).getTime();
-      if (emailTime < appliedTime - 86400000) { // email predates application by > 1 day
-        score -= 40;
-        matchReasons.push('Email timestamp predates application');
+    // Priority E: Conversation thread match
+    if (threadId && Array.isArray(job.lifecycleEvents)) {
+      if (job.lifecycleEvents.some(e => e.threadId === threadId)) {
+        score += 30;
+        reasons.push('Existing Gmail conversation thread match');
       }
     }
 
     if (score > bestScore) {
       bestScore = score;
       bestMatch = job;
-      bestField = matchReasons.join(', ');
-      bestReason = matchReasons.join('; ');
+      bestReasons = reasons;
     }
   }
 
-  // Normalize score to confidence
+  // Normalize score to confidence level
   const normalizedConfidence = Math.max(0, Math.min(1.0, bestScore / 100));
 
   let confidenceLevel = MatchConfidenceLevel.UNMATCHED;
-  if (normalizedConfidence >= 0.80) {
+  if (bestScore >= 80) {
     confidenceLevel = MatchConfidenceLevel.HIGH;
-  } else if (normalizedConfidence >= 0.50) {
+  } else if (bestScore >= 50) {
     confidenceLevel = MatchConfidenceLevel.MEDIUM;
-  } else if (normalizedConfidence >= 0.25) {
+  } else if (bestScore >= 30) {
     confidenceLevel = MatchConfidenceLevel.LOW;
   }
 
@@ -120,46 +132,46 @@ export async function matchEmailToApplication(parsedEmail = {}, config = {}) {
     matchConfidenceLevel: confidenceLevel,
     confidence: normalizedConfidence,
     jobRecord: confidenceLevel !== MatchConfidenceLevel.UNMATCHED ? bestMatch : null,
-    matchedField: bestField,
-    reason: bestReason || 'No significant match found'
+    matchedField: bestReasons.join(', '),
+    extractedRoleTitle: extractedRole,
+    extractedJobId,
+    reason: bestReasons.join('; ') || 'No significant match found'
   };
 }
 
-function calculateTitleMatchScore(jobTitle = '', emailText = '', subject = '') {
+function normalizeTitleForComparison(title = '') {
+  return compactText(title)
+    .toLowerCase()
+    .replace(/[^\w\s]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function calculateWordOverlap(titleA = '', titleB = '') {
+  const stopWords = new Set(['the', 'and', 'for', 'with', 'in', 'at', 'to', 'a', 'an', 'specialist', 'developer', 'assistant', 'manager']);
+  const wordsA = titleA.split(/\s+/).filter(w => w.length > 2 && !stopWords.has(w));
+  const wordsB = new Set(titleB.split(/\s+/).filter(w => w.length > 2 && !stopWords.has(w)));
+
+  if (wordsA.length === 0 || wordsB.size === 0) return 0;
+
+  let matches = 0;
+  for (const word of wordsA) {
+    if (wordsB.has(word)) {
+      matches += 1;
+    }
+  }
+
+  return matches / Math.max(wordsA.length, wordsB.size);
+}
+
+function calculateRawTitleMatchScore(jobTitle = '', emailText = '', subject = '') {
   if (!jobTitle) return 0;
 
   const cleanJobTitle = compactText(jobTitle).toLowerCase();
   const cleanSubject = compactText(subject).toLowerCase();
 
-  // Exact title in subject
-  if (cleanSubject.includes(cleanJobTitle)) {
-    return 45;
-  }
-
-  // Exact title in full email text
-  if (emailText.includes(cleanJobTitle)) {
-    return 35;
-  }
-
-  // Significant word overlap
-  const stopWords = new Set(['the', 'and', 'for', 'with', 'in', 'at', 'to', 'a', 'an', 'senior', 'junior', 'remote']);
-  const titleWords = cleanJobTitle
-    .replace(/[^a-z0-9\s]/g, ' ')
-    .split(/\s+/)
-    .filter(w => w.length > 2 && !stopWords.has(w));
-
-  if (titleWords.length === 0) return 0;
-
-  let matchedWords = 0;
-  for (const word of titleWords) {
-    if (emailText.includes(word)) {
-      matchedWords += 1;
-    }
-  }
-
-  const ratio = matchedWords / titleWords.length;
-  if (ratio >= 0.8) return 25;
-  if (ratio >= 0.5) return 15;
+  if (cleanSubject.includes(cleanJobTitle)) return 45;
+  if (emailText.includes(cleanJobTitle)) return 35;
 
   return 0;
 }

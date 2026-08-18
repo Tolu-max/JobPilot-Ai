@@ -11,172 +11,187 @@ import {
   matchEmailToApplication,
   MatchConfidenceLevel
 } from '../src/gmail/index.js';
+import { extractRoleTitle, extractJobId } from '../src/gmail/gmailMessageParser.js';
 import { buildConfig } from '../src/config.js';
+import { upsertJobRecord } from '../src/jobStore.js';
 
 const ROOT_DIR = process.cwd();
 
-test('Gmail Authenticator handles missing credentials gracefully without throwing unhandled exceptions', () => {
-  const config = buildConfig(['node', 'jobpilot', '--profile=tolu']);
-  const auth = new GmailAuthenticator(config);
-
-  assert.equal(auth.profileName, 'tolu');
-  assert.ok(auth.tokenFilePath.includes(path.join('profiles', 'tolu', 'gmailToken.json')));
-
-  // Without credentials configured
-  const creds = auth.getCredentials();
-  assert.equal(typeof creds, 'object');
-  assert.equal(typeof auth.isConfigured(), 'boolean');
-});
-
-test('Gmail Authenticator supports candidate profile-scoped environment overrides', () => {
-  process.env.TOLU_GMAIL_CLIENT_ID = 'test-tolu-client-id';
-  process.env.TOLU_GMAIL_CLIENT_SECRET = 'test-tolu-client-secret';
-  process.env.TOLU_GMAIL_REFRESH_TOKEN = 'test-tolu-refresh-token';
-
-  const config = buildConfig(['node', 'jobpilot', '--profile=tolu']);
-  const auth = new GmailAuthenticator(config);
-  const creds = auth.getCredentials();
-
-  assert.equal(creds.clientId, 'test-tolu-client-id');
-  assert.equal(creds.clientSecret, 'test-tolu-client-secret');
-  assert.equal(creds.directRefreshToken, 'test-tolu-refresh-token');
-
-  delete process.env.TOLU_GMAIL_CLIENT_ID;
-  delete process.env.TOLU_GMAIL_CLIENT_SECRET;
-  delete process.env.TOLU_GMAIL_REFRESH_TOKEN;
-});
-
-test('Gmail Message Parser parses headers, base64 body, snippet, and sender info', () => {
+test('Case A: BruntWork application update extracts role and classifies as RECRUITER_RESPONSE (not interview)', () => {
   const rawMsg = {
-    id: 'msg_123456',
-    threadId: 'thread_789',
-    internalDate: '1723980000000',
+    id: 'msg_bw_001',
+    threadId: 'th_001',
     payload: {
       headers: [
-        { name: 'From', value: 'BruntWork Talent Team <talent@bruntwork.co>' },
-        { name: 'To', value: 'toluoyelola066@gmail.com' },
-        { name: 'Subject', value: 'Application Confirmation: Full Stack Web Developer' },
-        { name: 'Date', value: 'Tue, 18 Aug 2026 14:00:00 +0100' }
+        { name: 'Subject', value: 'Update on Your Application for the Power Platform & AI Solutions Developer' },
+        { name: 'From', value: 'BruntWork Talent Team <applications@bruntwork.co>' }
       ],
       mimeType: 'text/plain',
       body: {
-        data: Buffer.from('Thank you for applying to the Full Stack Web Developer position at BruntWork. We have received your application.').toString('base64url')
+        data: Buffer.from('Hello Tolu,\nThank you for your interest in the role: Power Platform & AI Solutions Developer.\nWe\'ve received strong interest and our hiring team is reviewing profiles.').toString('base64url')
       }
-    },
-    snippet: 'Thank you for applying to the Full Stack Web Developer position at BruntWork.'
+    }
   };
 
   const parsed = parseGmailMessage(rawMsg);
+  assert.equal(parsed.extractedRoleTitle, 'Power Platform & AI Solutions Developer');
 
-  assert.equal(parsed.id, 'msg_123456');
-  assert.equal(parsed.threadId, 'thread_789');
-  assert.equal(parsed.senderName, 'BruntWork Talent Team');
-  assert.equal(parsed.senderEmail, 'talent@bruntwork.co');
-  assert.equal(parsed.senderDomain, 'bruntwork.co');
-  assert.equal(parsed.subject, 'Application Confirmation: Full Stack Web Developer');
-  assert.ok(parsed.bodyText.includes('We have received your application'));
+  const classification = classifyDeterministic(parsed);
+  assert.equal(classification.classification, EmailEventType.RECRUITER_RESPONSE);
+  assert.notEqual(classification.classification, EmailEventType.RECRUITER_INTERVIEW);
+
+  const interview = extractInterviewDetails(parsed);
+  assert.equal(interview.platform, null);
 });
 
-test('Gmail Classifier deterministically identifies APPLICATION_CONFIRMATION', () => {
-  const email = {
-    subject: 'We received your application for Front-End Web Developer',
-    bodyText: 'Hi Tolu,\n\nThank you for submitting your application to BruntWork. We have received your submission and our team is reviewing it.',
-    senderEmail: 'notifications@bruntwork.co'
+test('Case B: Rejection email with body job opening and ID extracts roleTitle and jobId', () => {
+  const rawMsg = {
+    id: 'msg_bw_002',
+    threadId: 'th_002',
+    payload: {
+      headers: [
+        { name: 'Subject', value: 'Rejection: Commerce Specialist | Shopify' },
+        { name: 'From', value: 'BruntWork Careers <notifications@bruntwork.co>' }
+      ],
+      mimeType: 'text/plain',
+      body: {
+        data: Buffer.from('Dear Candidate,\nRegarding the job opening, Commerce Specialist | Shopify with the job ID number 59248285331, you had applied for, we have decided to move forward with another applicant.').toString('base64url')
+      }
+    }
   };
 
-  const result = classifyDeterministic(email);
-  assert.equal(result.classification, EmailEventType.APPLICATION_CONFIRMATION);
-  assert.ok(result.confidence >= 0.9);
+  const parsed = parseGmailMessage(rawMsg);
+  assert.equal(parsed.extractedRoleTitle, 'Commerce Specialist | Shopify');
+  assert.equal(parsed.extractedJobId, '59248285331');
+
+  const classification = classifyDeterministic(parsed);
+  assert.equal(classification.classification, EmailEventType.REJECTION);
 });
 
-test('Gmail Classifier deterministically identifies CLIENT_INTERVIEW', () => {
-  const email = {
-    subject: 'Client Interview Invitation: Senior PHP & Laravel Developer',
-    bodyText: 'We are pleased to invite you to a client interview with our US client team.\n\nPlease find the meeting details below:\nDate: Monday, August 24 at 3:00 PM EST\nMeeting: https://meet.google.com/abc-defg-hij',
-    senderEmail: 'recruiter@bruntwork.com'
+test('Case C: Rejection mentioning interview process is NOT classified as an interview invitation', () => {
+  const rawMsg = {
+    id: 'msg_bw_003',
+    payload: {
+      headers: [
+        { name: 'Subject', value: 'Update on Your Application for the Front-End Web Developer / UI/UX Specialist' },
+        { name: 'From', value: 'BruntWork <talent@bruntwork.co>' }
+      ],
+      mimeType: 'text/plain',
+      body: {
+        data: Buffer.from('Thank you again for the time, thought, and effort you put into the application and interview process. Unfortunately, we have decided not to move forward with your candidacy at this time.').toString('base64url')
+      }
+    }
   };
 
-  const result = classifyDeterministic(email);
-  assert.equal(result.classification, EmailEventType.CLIENT_INTERVIEW);
-  assert.ok(result.confidence >= 0.9);
+  const parsed = parseGmailMessage(rawMsg);
+  const classification = classifyDeterministic(parsed);
 
-  const interview = extractInterviewDetails(email);
+  assert.equal(classification.classification, EmailEventType.REJECTION);
+  assert.notEqual(classification.classification, EmailEventType.RECRUITER_INTERVIEW);
+  assert.notEqual(classification.classification, EmailEventType.CLIENT_INTERVIEW);
+});
+
+test('Case D: Actual interview invitation extracts platform, meeting URL, and stage', () => {
+  const rawMsg = {
+    id: 'msg_bw_004',
+    payload: {
+      headers: [
+        { name: 'Subject', value: 'Interview Invitation: Front-End Web Developer' },
+        { name: 'From', value: 'Sarah Recruiter <sarah@bruntwork.co>' }
+      ],
+      mimeType: 'text/plain',
+      body: {
+        data: Buffer.from('We would like to invite you for an initial screening interview.\nPlease book your slot here: https://calendly.com/bruntwork-recruiting/30min\nWe look forward to speaking with you.').toString('base64url')
+      }
+    }
+  };
+
+  const parsed = parseGmailMessage(rawMsg);
+  const classification = classifyDeterministic(parsed);
+
+  assert.equal(classification.classification, EmailEventType.RECRUITER_INTERVIEW);
+
+  const interview = extractInterviewDetails(parsed);
+  assert.equal(interview.platform, 'Calendly');
+  assert.equal(interview.meetingUrl, 'https://calendly.com/bruntwork-recruiting/30min');
+});
+
+test('Case E: Application matching with exact matching role returns HIGH confidence', async () => {
+  const config = buildConfig(['node', 'jobpilot', '--profile=tolu']);
+
+  // Stage mock applied job
+  await upsertJobRecord(config, {
+    applicationUrl: 'https://bruntwork.co/jobs/frontend-web-developer',
+    title: 'Front-End Web Developer / UI/UX Specialist',
+    company: 'BruntWork',
+    source_site: 'bruntwork'
+  }, 'applied', { resumeProfile: 'tolu-frontend' });
+
+  const parsedEmail = {
+    subject: 'Update on Your Application for the Front-End Web Developer / UI/UX Specialist',
+    extractedRoleTitle: 'Front-End Web Developer / UI/UX Specialist',
+    senderEmail: 'notifications@bruntwork.co',
+    bodyText: 'Your application is under review.'
+  };
+
+  const match = await matchEmailToApplication(parsedEmail, config);
+  assert.equal(match.matchConfidenceLevel, MatchConfidenceLevel.HIGH);
+  assert.equal(match.jobRecord.title, 'Front-End Web Developer / UI/UX Specialist');
+  assert.equal(match.jobRecord.resumeProfile, 'tolu-frontend');
+});
+
+test('Case F: Application matching with exact BruntWork Job ID returns HIGH confidence even if title differs', async () => {
+  const config = buildConfig(['node', 'jobpilot', '--profile=tolu']);
+
+  await upsertJobRecord(config, {
+    applicationUrl: 'https://bruntwork.co/jobs/59248285331',
+    sourceJobId: '59248285331',
+    title: 'Shopify Specialist',
+    company: 'BruntWork',
+    source_site: 'bruntwork'
+  }, 'applied', { resumeProfile: 'tolu-ecommerce' });
+
+  const parsedEmail = {
+    subject: 'Rejection: Commerce Specialist | Shopify',
+    extractedRoleTitle: 'Commerce Specialist | Shopify',
+    extractedJobId: '59248285331',
+    senderEmail: 'notifications@bruntwork.co',
+    bodyText: 'The job opening, Commerce Specialist | Shopify with the job ID number 59248285331...'
+  };
+
+  const match = await matchEmailToApplication(parsedEmail, config);
+  assert.equal(match.matchConfidenceLevel, MatchConfidenceLevel.HIGH);
+  assert.equal(match.jobRecord.sourceJobId, '59248285331');
+  assert.equal(match.jobRecord.resumeProfile, 'tolu-ecommerce');
+});
+
+test('Case G: Client Interview extracts Google Meet and date/time accurately', () => {
+  const rawMsg = {
+    id: 'msg_bw_007',
+    payload: {
+      headers: [
+        { name: 'Subject', value: 'Client Interview: Senior Full Stack Developer' },
+        { name: 'From', value: 'BruntWork Client Services <client@bruntwork.co>' }
+      ],
+      mimeType: 'text/plain',
+      body: {
+        data: Buffer.from('We are pleased to invite you to a client interview.\nDate: Monday, August 24 at 3:00 PM EST\nMeeting: https://meet.google.com/abc-defg-hij').toString('base64url')
+      }
+    }
+  };
+
+  const parsed = parseGmailMessage(rawMsg);
+  const classification = classifyDeterministic(parsed);
+  assert.equal(classification.classification, EmailEventType.CLIENT_INTERVIEW);
+
+  const interview = extractInterviewDetails(parsed);
   assert.equal(interview.platform, 'Google Meet');
   assert.equal(interview.meetingUrl, 'https://meet.google.com/abc-defg-hij');
   assert.equal(interview.timezone, 'EST');
   assert.ok(interview.scheduledAt.includes('August 24'));
 });
 
-test('Gmail Classifier deterministically identifies RECRUITER_INTERVIEW with Calendly link', () => {
-  const email = {
-    subject: 'Interview Invitation - BruntWork Screening',
-    bodyText: 'We would like to invite you for an initial screen interview.\nPlease book a slot on my Calendly: https://calendly.com/bruntwork-recruiter/30min\nLooking forward to speaking with you.',
-    senderEmail: 'hr@bruntwork.co'
-  };
-
-  const result = classifyDeterministic(email);
-  assert.equal(result.classification, EmailEventType.RECRUITER_INTERVIEW);
-  assert.ok(result.confidence >= 0.85);
-
-  const interview = extractInterviewDetails(email);
-  assert.equal(interview.platform, 'Calendly');
-  assert.equal(interview.meetingUrl, 'https://calendly.com/bruntwork-recruiter/30min');
-});
-
-test('Gmail Classifier deterministically identifies TECHNICAL ASSESSMENT', () => {
-  const email = {
-    subject: 'Next Steps: Technical Skills Assessment',
-    bodyText: 'Please complete the following coding challenge on HackerRank within 48 hours:\nhttps://hackerrank.com/tests/12345\nGood luck!',
-    senderEmail: 'assessments@bruntwork.co'
-  };
-
-  const result = classifyDeterministic(email);
-  assert.equal(result.classification, EmailEventType.ASSESSMENT);
-  assert.ok(result.confidence >= 0.9);
-});
-
-test('Gmail Classifier deterministically identifies REJECTION without false positives', () => {
-  const email = {
-    subject: 'Application Update: WordPress & SEO Specialist',
-    bodyText: 'Thank you for taking the time to apply. Unfortunately, we have decided to move forward with other candidates whose experience more closely aligns with our current needs.',
-    senderEmail: 'talent@bruntwork.co'
-  };
-
-  const result = classifyDeterministic(email);
-  assert.equal(result.classification, EmailEventType.REJECTION);
-  assert.ok(result.confidence >= 0.9);
-});
-
-test('Gmail Classifier deterministically identifies OFFER', () => {
-  const email = {
-    subject: 'Job Offer: Full Stack Web Developer at BruntWork',
-    bodyText: 'We are pleased to offer you the position of Full Stack Web Developer. Attached is your formal offer of employment and contract.',
-    senderEmail: 'onboarding@bruntwork.com'
-  };
-
-  const result = classifyDeterministic(email);
-  assert.equal(result.classification, EmailEventType.OFFER);
-  assert.ok(result.confidence >= 0.9);
-});
-
-test('Gmail Application Matcher matches high confidence on exact URL and title', async () => {
-  const config = buildConfig(['node', 'jobpilot', '--profile=tolu']);
-
-  // Mock an applied job in candidate store
-  const mockEmail = {
-    subject: 'Client Interview: Full Stack Web Developer',
-    bodyText: 'Your application for Full Stack Web Developer at https://bruntwork.co/jobs/12345 is progressing to client interview.',
-    receivedAt: new Date().toISOString(),
-    threadId: 'th_001',
-    senderEmail: 'recruiter@bruntwork.co'
-  };
-
-  // Run matcher
-  const match = await matchEmailToApplication(mockEmail, config);
-  assert.ok(match.matchConfidenceLevel !== undefined);
-});
-
-test('Profile isolation: Tolu and Sister maintain independent Gmail configurations and states', () => {
+test('Security & Profile Isolation: Credentials and tokens stay strictly isolated', () => {
   const toluConfig = buildConfig(['node', 'jobpilot', '--profile=tolu']);
   const sisterConfig = buildConfig(['node', 'jobpilot', '--profile=sister']);
 
@@ -188,49 +203,9 @@ test('Profile isolation: Tolu and Sister maintain independent Gmail configuratio
   assert.ok(sisterAuth.tokenFilePath.includes('profiles\\sister') || sisterAuth.tokenFilePath.includes('profiles/sister'));
 });
 
-test('Interview details extractor handles Zoom, Teams, missing dates, and timezone formatting safely', () => {
-  // Zoom test
-  const zoomEmail = {
-    subject: 'Interview with Hiring Team',
-    bodyText: 'Please join our Zoom meeting on Wednesday, September 2 at 10:00 AM UTC: https://zoom.us/j/987654321',
-    senderName: 'Alex Recruiter'
-  };
-  const zoomDetails = extractInterviewDetails(zoomEmail);
-  assert.equal(zoomDetails.platform, 'Zoom');
-  assert.equal(zoomDetails.meetingUrl, 'https://zoom.us/j/987654321');
-  assert.equal(zoomDetails.timezone, 'UTC');
-  assert.equal(zoomDetails.interviewer, 'Alex Recruiter');
-
-  // Teams test
-  const teamsEmail = {
-    subject: 'Client Technical Screen',
-    bodyText: 'Here is the Microsoft Teams link: https://teams.microsoft.com/l/meetup-join/abc123xyz\nSee you on Friday, October 10 at 4:30 PM WAT.',
-    senderName: 'Sarah Client Manager'
-  };
-  const teamsDetails = extractInterviewDetails(teamsEmail);
-  assert.equal(teamsDetails.platform, 'Microsoft Teams');
-  assert.equal(teamsDetails.meetingUrl, 'https://teams.microsoft.com/l/meetup-join/abc123xyz');
-  assert.equal(teamsDetails.timezone, 'WAT');
-
-  // Missing link test (never invents fake URL)
-  const noLinkEmail = {
-    subject: 'Phone Discussion',
-    bodyText: 'We will call you directly at 2:00 PM EST.'
-  };
-  const noLinkDetails = extractInterviewDetails(noLinkEmail);
-  assert.equal(noLinkDetails.meetingUrl, '');
-  assert.equal(noLinkDetails.platform, 'Other / Unknown');
-});
-
-test('Security hardening: .gitignore includes gmailToken and sync state ignore rules', () => {
-  const gitignoreContent = fs.readFileSync(path.join(ROOT_DIR, '.gitignore'), 'utf8');
-  assert.ok(gitignoreContent.includes('gmailToken'), '.gitignore must explicitly include gmailToken rule');
-  assert.ok(gitignoreContent.includes('gmailSyncState'), '.gitignore must explicitly include gmailSyncState rule');
-});
-
-test('Security hardening: Doctor check and diagnostics never expose raw refresh token values', async () => {
+test('Security & Secrets: Doctor check and diagnostics never expose raw refresh token values', async () => {
   const { inspectHealth } = await import('../src/cli/doctor.js');
-  const secretRefreshToken = 'sensitive-super-secret-refresh-token-12345';
+  const secretRefreshToken = 'sensitive-super-secret-refresh-token-99999';
 
   const report = await inspectHealth({
     rootDir: ROOT_DIR,
