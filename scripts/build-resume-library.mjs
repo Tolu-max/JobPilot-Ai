@@ -322,9 +322,23 @@ async function main() {
 
   try {
     for (const [candidateId, resumes] of Object.entries(RESUME_PROFILES)) {
-      const masterPath = path.join(ROOT_DIR, 'profiles', candidateId, 'masterCareerProfile.json');
-      const masterContent = await fs.readFile(masterPath, 'utf8');
-      const candidateMaster = JSON.parse(masterContent);
+      const candidates = [
+        path.join(ROOT_DIR, 'profiles', candidateId, 'masterCareerProfile.json'),
+        path.join(ROOT_DIR, 'data', 'profiles', candidateId, 'masterCareerProfile.json'),
+        path.join('/app/data', 'profiles', candidateId, 'masterCareerProfile.json')
+      ];
+      let masterContent = null;
+      for (const c of candidates) {
+        try {
+          masterContent = await fs.readFile(c, 'utf8');
+          break;
+        } catch {}
+      }
+      if (!masterContent) {
+        console.warn(`[build-resumes] Skipping ${candidateId}: masterCareerProfile.json not found.`);
+        continue;
+      }
+      const candidateMaster = JSON.parse(masterContent.replace(/^\uFEFF/, ''));
 
       console.log(`\n[build-resumes] Processing candidate: ${candidateMaster.name} (${candidateId})`);
 

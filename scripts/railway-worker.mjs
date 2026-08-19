@@ -83,7 +83,7 @@ for (const prof of ['tolu', 'sister']) {
   const pDir = path.join(process.cwd(), 'profiles', prof);
   const pPrefs = path.join(pDir, 'preferences.json');
   try {
-    const raw = await fs.readFile(pPrefs, 'utf8');
+    const raw = (await fs.readFile(pPrefs, 'utf8')).replace(/^\uFEFF/, '');
     const parsed = JSON.parse(raw);
     parsed.enabledSites = ['bruntwork'];
     parsed.sitePriority = ['bruntwork'];
