@@ -149,6 +149,7 @@ export function orderedEnabledSites(config) {
   });
 }
 
+
 async function runSiteScraper(entry, config, site, siteConfig) {
   if ((config.testPlatformMode || config.e2eTestMode) && config.platformScrapeMode !== 'limited') {
     return createPlatformMockJobs(site, config, siteConfig);
@@ -156,7 +157,7 @@ async function runSiteScraper(entry, config, site, siteConfig) {
 
   const retries = Number.parseInt(siteConfig.retries, 10);
   const retryCount = Number.isFinite(retries) ? retries : 1;
-  const timeoutMs = Number.parseInt(siteConfig.timeoutMs, 10) || 120000;
+  const timeoutMs = Number.parseInt(siteConfig.timeoutMs, 10) || 45000;
 
   return withTimeout(
     () =>
@@ -170,9 +171,6 @@ async function runSiteScraper(entry, config, site, siteConfig) {
 }
 
 export function isCoolingDown(site, siteConfig, state) {
-  // Manual snooze (set via the Telegram /snooze command) always wins.
-  const snoozeUntil = state.sites?.[site]?.snoozeUntil;
-  if (snoozeUntil && Date.now() < new Date(snoozeUntil).getTime()) return true;
 
   const cooldownMinutes = Number.parseInt(siteConfig.cooldownMinutes, 10);
   if (!Number.isFinite(cooldownMinutes) || cooldownMinutes <= 0) return false;

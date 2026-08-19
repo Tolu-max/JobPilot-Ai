@@ -85,9 +85,9 @@ export async function runJobHunt(config, options = {}) {
   });
   console.log(`[pipeline] Starting scraper pass for ${config.profileName}...`);
   const scrapeResult = await withStartupTimeout(
-    withRetry(() => runScrapers(config), { retries: 1, delayMs: 5000 }),
-    180000,
-    `BruntWork scraper pass for ${config.profileName}`
+    runScrapers(config),
+    300000,
+    `Scraper pass for ${config.profileName}`
   ).catch((error) => {
     console.error(`[pipeline] ${error.message}`);
     return { jobs: [], siteResults: [{ site: 'bruntwork', status: 'error', error: error.message }] };
