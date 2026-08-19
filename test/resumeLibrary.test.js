@@ -25,8 +25,17 @@ test('master career profiles exist, are valid JSON, and completely isolated', ()
   assert.ok(tolu.verifiedSkills.includes('Laravel'), 'Tolu must have verified Laravel skill');
   assert.ok(tolu.verifiedSkills.includes('PHP'), 'Tolu must have verified PHP skill');
   assert.ok(tolu.workExperience.some(e => e.company === 'AAIPhones'), 'Tolu experience must include AAIPhones');
-  assert.ok(tolu.workExperience.some(e => e.company === 'Guru Web Design & SEO'), 'Tolu experience must include Guru Web Design & SEO');
+  const guruExp = tolu.workExperience.find(e => e.company === 'Guru Web Design & SEO');
+  assert.ok(guruExp, 'Tolu experience must include Guru Web Design & SEO');
+  assert.equal(guruExp.period, '2024 – 2026', 'Guru employment period must be corrected to 2024 – 2026');
   assert.ok(tolu.projects.some(p => p.id === 'proj_tconnect'), 'Tolu projects must include TConnect');
+
+  // Verify Tolu resume library profiles all reflect Guru 2024 – 2026
+  for (const profile of Object.values(RESUME_PROFILES.tolu)) {
+    const pGuru = profile.experience.find(e => e.company === 'Guru Web Design & SEO');
+    assert.ok(pGuru, `Profile ${profile.id} must include Guru`);
+    assert.equal(pGuru.period, '2024 – 2026', `Profile ${profile.id} must have Guru period 2024 – 2026`);
+  }
 
   // Verify Sister
   assert.equal(sister.candidateId, 'sister');

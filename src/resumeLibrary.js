@@ -37,26 +37,26 @@ export const RESUME_PROFILES = {
       ],
       experience: [
         {
+          company: 'Guru Web Design & SEO',
+          role: 'SEO Specialist & Web Developer',
+          period: '2024 – 2026',
+          location: 'Remote',
+          bulletPoints: [
+            'Developed and customized dynamic web interfaces, integrating APIs and resolving complex technical site issues.',
+            'Performed comprehensive technical website audits, fixing server-side errors, schema markup, and speed bottlenecks.',
+            'Customized WordPress architectures and database structures to improve site performance and core web vitals.'
+          ]
+        },
+        {
           company: 'AAIPhones',
           role: 'Full Stack Developer & Marketing Assistant',
-          period: '2023 – Present',
+          period: '2023 – 2024',
           location: 'Remote / Hybrid',
           bulletPoints: [
             'Engineered and maintained the e-commerce product catalog, inventory display, and ordering workflows with mobile-responsive design.',
             'Diagnosed and resolved backend and front-end functionality issues to ensure seamless customer checkout and transaction reliability.',
             'Integrated payment solutions and tracking APIs to streamline sales operations and automated customer notifications.',
             'Optimized server queries, asset delivery, and database indexing for improved platform speed and user experience.'
-          ]
-        },
-        {
-          company: 'Guru Web Design & SEO',
-          role: 'SEO Specialist & Web Developer',
-          period: '2022 – 2024',
-          location: 'Remote',
-          bulletPoints: [
-            'Developed and customized dynamic web interfaces, integrating APIs and resolving complex technical site issues.',
-            'Performed comprehensive technical website audits, fixing server-side errors, schema markup, and speed bottlenecks.',
-            'Customized WordPress architectures and database structures to improve site performance and core web vitals.'
           ]
         },
         {
@@ -120,25 +120,25 @@ export const RESUME_PROFILES = {
       ],
       experience: [
         {
-          company: 'AAIPhones',
-          role: 'Full Stack Developer & Marketing Assistant',
-          period: '2023 – Present',
-          location: 'Remote / Hybrid',
-          bulletPoints: [
-            'Designed and implemented mobile-first responsive user interfaces for product listings, category pages, and checkout workflows.',
-            'Optimized client-side rendering, compressed assets, and minified scripts to achieve significant speed improvements.',
-            'Resolved UI/UX defects across multiple mobile and desktop browsers to deliver a consistent, frictionless shopping experience.'
-          ]
-        },
-        {
           company: 'Guru Web Design & SEO',
           role: 'SEO Specialist & Web Developer',
-          period: '2022 – 2024',
+          period: '2024 – 2026',
           location: 'Remote',
           bulletPoints: [
             'Redesigned and customized client websites using responsive HTML5/CSS3 and modern JavaScript interactions.',
             'Audited and resolved on-page structural issues, heading hierarchies, mobile usability errors, and navigation flows.',
             'Optimized web assets and styling to elevate Core Web Vitals and Google PageSpeed Insights scores.'
+          ]
+        },
+        {
+          company: 'AAIPhones',
+          role: 'Full Stack Developer & Marketing Assistant',
+          period: '2023 – 2024',
+          location: 'Remote / Hybrid',
+          bulletPoints: [
+            'Designed and implemented mobile-first responsive user interfaces for product listings, category pages, and checkout workflows.',
+            'Optimized client-side rendering, compressed assets, and minified scripts to achieve significant speed improvements.',
+            'Resolved UI/UX defects across multiple mobile and desktop browsers to deliver a consistent, frictionless shopping experience.'
           ]
         },
         {
@@ -203,7 +203,7 @@ export const RESUME_PROFILES = {
         {
           company: 'Guru Web Design & SEO',
           role: 'SEO Specialist & Web Developer',
-          period: '2022 – 2024',
+          period: '2024 – 2026',
           location: 'Remote',
           bulletPoints: [
             'Executed end-to-end technical, on-page, and local SEO strategies for 20+ international clients across multiple industries.',
@@ -216,7 +216,7 @@ export const RESUME_PROFILES = {
         {
           company: 'AAIPhones',
           role: 'Full Stack Developer & Marketing Assistant',
-          period: '2023 – Present',
+          period: '2023 – 2024',
           location: 'Remote / Hybrid',
           bulletPoints: [
             'Implemented on-page SEO best practices across the e-commerce product catalog to increase organic discovery.',
@@ -274,26 +274,26 @@ export const RESUME_PROFILES = {
       ],
       experience: [
         {
+          company: 'Guru Web Design & SEO',
+          role: 'SEO Specialist & Web Developer',
+          period: '2024 – 2026',
+          location: 'Remote',
+          bulletPoints: [
+            'Maintained and optimized client business websites, ensuring 99.9% uptime and smooth daily operations.',
+            'Monitored website performance metrics, executed regular plugin/system updates, and resolved technical issues.',
+            'Enhanced digital product pages and landing pages to support client lead generation and sales conversion.'
+          ]
+        },
+        {
           company: 'AAIPhones',
           role: 'Full Stack Developer & Marketing Assistant',
-          period: '2023 – Present',
+          period: '2023 – 2024',
           location: 'Remote / Hybrid',
           bulletPoints: [
             'Maintained the commercial e-commerce storefront, updating product catalogs, pricing tiers, and promotional banners.',
             'Troubleshot and fixed operational website glitches, checkout errors, and navigation bugs in a timely manner.',
             'Integrated secure payment handling and automated customer notification systems to enhance order fulfillment.',
             'Optimized product images, page layout, and server response times to ensure fast mobile shopping experiences.'
-          ]
-        },
-        {
-          company: 'Guru Web Design & SEO',
-          role: 'SEO Specialist & Web Developer',
-          period: '2022 – 2024',
-          location: 'Remote',
-          bulletPoints: [
-            'Maintained and optimized client business websites, ensuring 99.9% uptime and smooth daily operations.',
-            'Monitored website performance metrics, executed regular plugin/system updates, and resolved technical issues.',
-            'Enhanced digital product pages and landing pages to support client lead generation and sales conversion.'
           ]
         }
       ],
