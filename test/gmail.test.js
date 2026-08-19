@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
+import fs from 'node:fs/promises';
 import path from 'node:path';
+import os from 'node:os';
 import {
   GmailAuthenticator,
   parseGmailMessage,
@@ -247,20 +248,22 @@ test('Lifecycle Monotonicity: Older historical events never downgrade advanced a
 
 test('Automated Worker Sync: isGmailSyncDue calculates intervals accurately', async () => {
   const { isGmailSyncDue } = await import('../src/gmail/gmailSync.js');
-  const config = buildConfig(['node', 'jobpilot', '--profile=tolu']);
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'gmail-due-test-'));
+  const syncStatePath = path.join(tempDir, 'gmailSyncState.json');
 
-  // If sync interval is large and last sync was just now, should not be due
-  const due = await isGmailSyncDue({
-    ...config,
-    gmailSyncIntervalMs: 6000000 // 100 minutes
-  });
-  // Since we ran sync moments ago, it should not be due
-  assert.equal(due, false);
+  try {
+    // 1. Initial state (no sync file) -> should be due
+    const configInitial = { profileName: 'test_due', profileDir: tempDir };
+    assert.equal(await isGmailSyncDue(configInitial), true);
 
-  // If interval is 0, should be due immediately
-  const dueImmediately = await isGmailSyncDue({
-    ...config,
-    gmailSyncIntervalMs: 0
-  });
-  assert.equal(dueImmediately, true);
+    // 2. Recent sync within interval -> should NOT be due
+    await fs.writeFile(syncStatePath, JSON.stringify({ lastSyncAt: new Date().toISOString() }), 'utf8');
+    assert.equal(await isGmailSyncDue({ ...configInitial, gmailSyncIntervalMs: 6000000 }), false);
+
+    // 3. Stale sync past interval -> should be due
+    await fs.writeFile(syncStatePath, JSON.stringify({ lastSyncAt: new Date(Date.now() - 1000000).toISOString() }), 'utf8');
+    assert.equal(await isGmailSyncDue({ ...configInitial, gmailSyncIntervalMs: 60000 }), true);
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {});
+  }
 });

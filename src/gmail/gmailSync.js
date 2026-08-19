@@ -13,6 +13,7 @@ import { classifyEmailMessage, EmailEventType } from './gmailClassifier.js';
 import { matchEmailToApplication, MatchConfidenceLevel } from './gmailApplicationMatcher.js';
 import { loadJobStore, saveJobStore } from '../jobStore.js';
 import { sendNotification } from '../notifications.js';
+import { sendLifecycleNotification } from '../telegramBot.js';
 import { getResumeProfile } from '../resumeLibrary.js';
 
 export const LIFECYCLE_STAGE_RANK = Object.freeze({
@@ -272,82 +273,18 @@ async function dispatchTelegramEvent(config, evidence, matchResult, classificati
   const classification = evidence.classification;
   if (classification === EmailEventType.UNKNOWN) return;
 
-  const candidateName = String(config.profileName || 'Candidate').toUpperCase();
-  const jobTitle = matchResult.jobRecord?.title || evidence.extractedRoleTitle || evidence.subject;
-  const company = matchResult.jobRecord?.company || 'BruntWork';
-  const confidenceLevel = matchResult.matchConfidenceLevel;
-  const jobId = evidence.extractedJobId || matchResult.jobRecord?.sourceJobId || null;
+  const event = {
+    ...evidence,
+    matchedJobTitle: matchResult.jobRecord?.title || evidence.extractedRoleTitle || evidence.subject,
+    company: matchResult.jobRecord?.company || 'BruntWork',
+    matchedResumeProfile: matchResult.jobRecord?.resumeProfile || evidence.matchedResumeProfile,
+    interviewDetails: classificationResult.interviewDetails || {}
+  };
 
-  // Resolve human-readable resume profile if matched
-  let resumeLabel = null;
-  const resumeProfileId = matchResult.jobRecord?.resumeProfile || evidence.matchedResumeProfile;
-  if (resumeProfileId) {
-    const resProfile = getResumeProfile(config.profileName || 'tolu', resumeProfileId);
-    resumeLabel = resProfile?.title ? `${resProfile.title} (${resumeProfileId})` : resumeProfileId;
-  }
-
-  let message = '';
-
-  if (classification === EmailEventType.CLIENT_INTERVIEW || classification === EmailEventType.RECRUITER_INTERVIEW) {
-    const stage = classification === EmailEventType.CLIENT_INTERVIEW ? 'Client Interview' : 'Recruiter Interview';
-    const interview = classificationResult.interviewDetails || {};
-
-    message = `🎯 *[${candidateName}] ${stage.toUpperCase()} DETECTED*\n\n`
-      + `*Role:* ${escapeMarkdown(jobTitle)}\n`
-      + `*Company:* ${escapeMarkdown(company)}\n`
-      + `*Stage:* ${stage}\n`
-      + (jobId ? `*Job ID:* \`${escapeMarkdown(jobId)}\`\n` : '')
-      + (interview.platform ? `*Platform:* ${escapeMarkdown(interview.platform)}\n` : '')
-      + (interview.scheduledAt ? `*Date/Time:* ${escapeMarkdown(interview.scheduledAt)} ${interview.timezone || ''}\n` : '')
-      + (interview.meetingUrl ? `*Meeting Link:* ${interview.meetingUrl}\n` : '')
-      + (interview.interviewer ? `*Interviewer:* ${escapeMarkdown(interview.interviewer)}\n` : '')
-      + (resumeLabel ? `*Resume:* ${escapeMarkdown(resumeLabel)}\n` : '')
-      + `*Match:* ${confidenceLevel}`;
-  } else if (classification === EmailEventType.OFFER) {
-    message = `🎉 *[${candidateName}] JOB OFFER DETECTED*\n\n`
-      + `*Role:* ${escapeMarkdown(jobTitle)}\n`
-      + `*Company:* ${escapeMarkdown(company)}\n`
-      + `*Stage:* Offer Received\n`
-      + (jobId ? `*Job ID:* \`${escapeMarkdown(jobId)}\`\n` : '')
-      + (resumeLabel ? `*Resume:* ${escapeMarkdown(resumeLabel)}\n` : '')
-      + `*Subject:* ${escapeMarkdown(evidence.subject)}\n`
-      + `*Match:* ${confidenceLevel}`;
-  } else if (classification === EmailEventType.REJECTION) {
-    message = `❌ *[${candidateName}] APPLICATION UPDATE*\n\n`
-      + `*Role:* ${escapeMarkdown(jobTitle)}\n`
-      + `*Company:* ${escapeMarkdown(company)}\n`
-      + `*Stage:* Rejected\n`
-      + (jobId ? `*Job ID:* \`${escapeMarkdown(jobId)}\`\n` : '')
-      + (resumeLabel ? `*Resume:* ${escapeMarkdown(resumeLabel)}\n` : '')
-      + `*Reason:* ${escapeMarkdown(evidence.excerpt.slice(0, 160))}\n`
-      + `*Match:* ${confidenceLevel}`;
-  } else if (classification === EmailEventType.ASSESSMENT) {
-    message = `📝 *[${candidateName}] ASSESSMENT INVITATION*\n\n`
-      + `*Role:* ${escapeMarkdown(jobTitle)}\n`
-      + `*Company:* ${escapeMarkdown(company)}\n`
-      + `*Stage:* Skills Assessment\n`
-      + (jobId ? `*Job ID:* \`${escapeMarkdown(jobId)}\`\n` : '')
-      + (resumeLabel ? `*Resume:* ${escapeMarkdown(resumeLabel)}\n` : '')
-      + `*Subject:* ${escapeMarkdown(evidence.subject)}\n`
-      + `*Match:* ${confidenceLevel}`;
-  } else if (classification === EmailEventType.RECRUITER_RESPONSE || classification === EmailEventType.APPLICATION_CONFIRMATION) {
-    const stage = classification === EmailEventType.APPLICATION_CONFIRMATION ? 'Application Confirmed' : 'Application Under Review';
-    message = `📬 *[${candidateName}] APPLICATION UPDATE: ${stage.toUpperCase()}*\n\n`
-      + `*Role:* ${escapeMarkdown(jobTitle)}\n`
-      + `*Company:* ${escapeMarkdown(company)}\n`
-      + `*Stage:* ${stage}\n`
-      + (jobId ? `*Job ID:* \`${escapeMarkdown(jobId)}\`\n` : '')
-      + (resumeLabel ? `*Resume:* ${escapeMarkdown(resumeLabel)}\n` : '')
-      + `*Excerpt:* ${escapeMarkdown(evidence.excerpt.slice(0, 160))}\n`
-      + `*Match:* ${confidenceLevel}`;
-  }
-
-  if (message) {
-    try {
-      await sendNotification(message, config, { type: 'gmail_event' });
-    } catch (err) {
-      console.warn(`[gmailSync] Telegram notification failed: ${err.message}`);
-    }
+  try {
+    await sendLifecycleNotification(event, config);
+  } catch (err) {
+    console.warn(`[gmailSync] Telegram notification failed: ${err.message}`);
   }
 }
 

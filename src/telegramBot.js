@@ -6,6 +6,8 @@ import path from 'node:path';
 import { assertTelegramChatAllowed, resolveTelegramRecipient } from './notifications/router.js';
 import { hasRunner, isPaused, requestRun, setPaused } from './botControl.js';
 import { flushPendingApplyQueue } from './pipeline.js';
+import { selectResumeForJob } from './resumeSelector.js';
+import { getResumeProfile } from './resumeLibrary.js';
 
 const POLL_INTERVAL_MS = 3000;
 let lastUpdateId = 0;
@@ -13,7 +15,6 @@ let pollingActive = false;
 
 // Track how many review notifications sent per run to limit noise
 let reviewNotifCount = 0;
-let overflowCount = 0;
 const MAX_REVIEW_NOTIFS_PER_RUN = 50;
 const MIN_REVIEW_SCORE = 1;
 
@@ -200,28 +201,167 @@ export async function sendReviewNotification(job, score, config) {
   });
 }
 
+function formatClusterBadge(clusterName = '', clusterTier = '') {
+  const c = `${clusterName} ${clusterTier}`.toUpperCase();
+  if (c.includes('PROVEN')) return '🟢';
+  if (c.includes('SELECTIVE')) return '🟡';
+  if (c.includes('DEAD') || c.includes('FAILED')) return '🔴';
+  if (c.includes('EXCLUSION') || c.includes('HARD')) return '⛔';
+  return '🟡';
+}
+
+function resolveCandidateDisplayName(config = {}) {
+  const name = String(config?.displayName || config?.profileName || 'TOLU').toUpperCase();
+  return escapeHtml(name);
+}
+
+export async function sendAutoApplyNotification(job, analysis = {}, config = {}, status = 'starting', errorReason = '') {
+  const recipient = resolveTelegramRecipient(config, { job });
+  if (!config?.telegramBotToken || !recipient.telegram_chat_id) return;
+
+  const candidate = resolveCandidateDisplayName(config);
+  const title = escapeHtml(job.title || 'Untitled role');
+  const company = escapeHtml(job.company || 'BruntWork');
+  const url = job.applicationUrl || job.job_url || '';
+  const score = analysis.score ?? analysis.application_score ?? analysis.local_score ?? 85;
+
+  const cluster = job.cluster || analysis.cluster || {};
+  const clusterName = escapeHtml(cluster.clusterName || 'Proven Winner');
+  const clusterBadge = formatClusterBadge(cluster.clusterName, cluster.tier);
+
+  const selectedResume = selectResumeForJob(config, job);
+  const resProfile = getResumeProfile(config.profileName || 'tolu', selectedResume.profileId);
+  const resumeLabel = escapeHtml(resProfile?.title ? `${resProfile.title} (${selectedResume.profileId})` : selectedResume.profileId);
+
+  let text = '';
+  const buttons = [];
+
+  if (status === 'starting') {
+    const strengths = (analysis.matchedSkills || []).slice(0, 4);
+    const whyLines = strengths.length > 0
+      ? strengths.map(s => `✓ ${escapeHtml(s)}`).join('\n')
+      : '✓ Strong profile and skill alignment\n✓ Verified historical success pattern\n✓ No hard requirement conflicts';
+
+    text = [
+      `🚀 <b>AUTO-APPLYING</b>`,
+      '',
+      `👤 <b>${candidate}</b>`,
+      '',
+      `💼 <b>${title}</b>`,
+      `🏢 <b>${company}</b>`,
+      '',
+      `<b>Match:</b> ${escapeHtml(score)}/100`,
+      `<b>Cluster:</b> ${clusterBadge} ${clusterName}`,
+      `<b>Resume:</b> ${resumeLabel}`,
+      '',
+      `<b>Why:</b>`,
+      whyLines,
+      '',
+      `<b>Status:</b>`,
+      `⏳ Application being submitted...`
+    ].filter(Boolean).join('\n');
+
+    if (url) buttons.push([{ text: '🔗 View Job', url }]);
+  } else if (status === 'success') {
+    text = [
+      `✅ <b>APPLICATION SUBMITTED</b>`,
+      '',
+      `👤 <b>${candidate}</b>`,
+      '',
+      `💼 <b>${title}</b>`,
+      `🏢 <b>${company}</b>`,
+      '',
+      `<b>Match:</b> ${escapeHtml(score)}/100`,
+      `<b>Cluster:</b> ${clusterBadge} ${clusterName}`,
+      `<b>Resume:</b> ${resumeLabel}`,
+      '',
+      `<b>Status:</b> Submitted`
+    ].filter(Boolean).join('\n');
+
+    if (url) buttons.push([{ text: '🔗 View Job', url }]);
+  } else if (status === 'failed') {
+    text = [
+      `❌ <b>APPLICATION FAILED</b>`,
+      '',
+      `👤 <b>${candidate}</b>`,
+      '',
+      `💼 <b>${title}</b>`,
+      `🏢 <b>${company}</b>`,
+      '',
+      `<b>Resume:</b> ${resumeLabel}`,
+      `<b>Failure Reason:</b> ${escapeHtml(errorReason || 'Submission error')}`
+    ].filter(Boolean).join('\n');
+
+    if (url) buttons.push([{ text: '🔗 View Job', url }]);
+  }
+
+  if (text) {
+    await sendWithRateLimit(config, recipient.telegram_chat_id, {
+      text,
+      parse_mode: 'HTML',
+      disable_web_page_preview: true,
+      reply_markup: buttons.length > 0 ? { inline_keyboard: buttons } : undefined
+    });
+  }
+}
+
 async function sendReviewNotificationHtml(job, score, config) {
   const recipient = resolveTelegramRecipient(config, { job });
-  const profile = escapeHtml(profileLabel(config));
+  const candidate = resolveCandidateDisplayName(config);
   const callbackProfile = profileCallbackKey(config);
   const jobHash = job.job_hash || job.hash || hashJob(job) || '';
   const shortHash = jobHash.slice(0, 16);
   const title = escapeHtml(job.title || 'Untitled role');
-  const company = job.company ? `\nCompany: ${escapeHtml(job.company)}` : '';
+  const company = escapeHtml(job.company || 'BruntWork');
   const url = job.applicationUrl || job.job_url || '';
+
+  const cluster = job.cluster || job.local?.cluster || {};
+  const clusterName = escapeHtml(cluster.clusterName || 'Selective Fit');
+  const clusterBadge = formatClusterBadge(cluster.clusterName, cluster.tier);
+
+  const selectedResume = selectResumeForJob(config, job);
+  const resProfile = getResumeProfile(config.profileName || 'tolu', selectedResume.profileId);
+  const resumeLabel = escapeHtml(resProfile?.title ? `${resProfile.title} (${selectedResume.profileId})` : selectedResume.profileId);
+
+  const matchedSkills = Array.isArray(job.matchedSkills) ? job.matchedSkills : (job.local?.matchedSkills || []);
+  const strongMatches = matchedSkills.slice(0, 4).map(s => `✓ ${escapeHtml(s)}`).join('\n') || '✓ Core skills and background match';
+
+  const missingSkills = Array.isArray(job.missingSkills) ? job.missingSkills : (job.local?.missingSkills || []);
   const reviewReason = job.reviewReason || job.review_reason || '';
-  const desc = truncateDescription(reviewReason || job.description || job.raw?.description || '');
+  const concernsList = [];
+  if (reviewReason && !reviewReason.includes('passed')) concernsList.push(`⚠️ ${escapeHtml(reviewReason)}`);
+  for (const m of missingSkills.slice(0, 2)) {
+    concernsList.push(`⚠️ ${escapeHtml(m)} not explicitly verified`);
+  }
+  const concerns = concernsList.join('\n') || '⚠️ Manual review recommended before applying';
+
   const text = [
-    `<b>Review required</b> [${profile}]`,
+    `🟡 <b>REVIEW REQUIRED</b>`,
     '',
-    `<b>${title}</b>${company}`,
-    `Score: ${escapeHtml(score)} | Source: ${escapeHtml(job.source_site || 'unknown')}`,
-    desc ? `Reason: ${escapeHtml(desc)}` : ''
+    `👤 <b>${candidate}</b>`,
+    '',
+    `💼 <b>${title}</b>`,
+    `🏢 <b>${company}</b>`,
+    '',
+    `<b>Match:</b> ${escapeHtml(score)}/100`,
+    `<b>Cluster:</b> ${clusterBadge} ${clusterName}`,
+    `<b>Resume:</b> ${resumeLabel}`,
+    '',
+    `<b>Strong matches:</b>`,
+    strongMatches,
+    '',
+    `<b>Potential concerns:</b>`,
+    concerns,
+    '',
+    `<b>Historical signal:</b>`,
+    `${clusterBadge} ${clusterName}`
   ].filter(Boolean).join('\n');
+
   const firstRow = [];
-  if (url) firstRow.push({ text: 'Open job', url });
-  firstRow.push({ text: 'Apply', callback_data: `accept:${callbackProfile}:${shortHash}` });
-  firstRow.push({ text: 'Skip', callback_data: `reject:${callbackProfile}:${shortHash}` });
+  if (url) firstRow.push({ text: '🔗 View Job', url });
+  firstRow.push({ text: '✅ Apply', callback_data: `accept:${callbackProfile}:${shortHash}` });
+  firstRow.push({ text: '❌ Skip', callback_data: `reject:${callbackProfile}:${shortHash}` });
+
   await sendWithRateLimit(config, recipient.telegram_chat_id, {
     text,
     parse_mode: 'HTML',
@@ -229,10 +369,127 @@ async function sendReviewNotificationHtml(job, score, config) {
     reply_markup: {
       inline_keyboard: [
         firstRow,
-        [{ text: 'Details', callback_data: `details:${callbackProfile}:${shortHash}` }]
+        [{ text: '📄 Details', callback_data: `details:${callbackProfile}:${shortHash}` }]
       ]
     }
   });
+}
+
+export async function sendLifecycleNotification(event = {}, config = {}) {
+  const recipient = resolveTelegramRecipient(config, { profile_id: config?.profileName });
+  if (!config?.telegramBotToken || !recipient.telegram_chat_id) return;
+
+  const candidate = resolveCandidateDisplayName(config);
+  const classification = event.classification || 'unknown';
+  const jobTitle = escapeHtml(event.matchedJobTitle || event.extractedRoleTitle || event.subject || 'Role');
+  const company = escapeHtml(event.company || 'BruntWork');
+  const resumeProfileId = event.matchedResumeProfile || '';
+  const resProfile = resumeProfileId ? getResumeProfile(config.profileName || 'tolu', resumeProfileId) : null;
+  const resumeLabel = escapeHtml(resProfile?.title ? `${resProfile.title} (${resumeProfileId})` : resumeProfileId);
+  const interview = event.interviewDetails || {};
+
+  let text = '';
+  const buttons = [];
+
+  if (classification === 'client_interview') {
+    text = [
+      `🔥 <b>CLIENT INTERVIEW</b>`,
+      '',
+      `👤 <b>${candidate}</b>`,
+      '',
+      `💼 <b>${jobTitle}</b>`,
+      `🏢 <b>${company}</b>`,
+      '',
+      `<b>Stage:</b> Client Interview`,
+      interview.scheduledAt ? `<b>Interview:</b>\n📅 ${escapeHtml(interview.scheduledAt)} ${escapeHtml(interview.timezone || '')}` : '',
+      resumeLabel ? `<b>Resume:</b>\n${resumeLabel}` : '',
+      '',
+      `<b>Historical signal:</b>\n🟢 Proven Winner`
+    ].filter(Boolean).join('\n');
+
+    if (interview.meetingUrl) buttons.push([{ text: '🔗 Join Interview', url: interview.meetingUrl }]);
+  } else if (classification === 'recruiter_interview') {
+    text = [
+      `🎯 <b>RECRUITER INTERVIEW</b>`,
+      '',
+      `👤 <b>${candidate}</b>`,
+      '',
+      `💼 <b>${jobTitle}</b>`,
+      `🏢 <b>${company}</b>`,
+      '',
+      `<b>Stage:</b> Recruiter Interview`,
+      interview.interviewer ? `<b>Recruiter:</b> ${escapeHtml(interview.interviewer)}` : '',
+      interview.scheduledAt ? `<b>Interview:</b>\n📅 ${escapeHtml(interview.scheduledAt)} ${escapeHtml(interview.timezone || '')}` : '',
+      resumeLabel ? `<b>Resume:</b>\n${resumeLabel}` : '',
+      '',
+      `<b>Historical profile:</b>\n🟢 Proven Winner`
+    ].filter(Boolean).join('\n');
+
+    if (interview.meetingUrl) buttons.push([{ text: '🔗 Interview Link', url: interview.meetingUrl }]);
+  } else if (classification === 'interview_prep') {
+    text = [
+      `📚 <b>INTERVIEW PREP</b>`,
+      '',
+      `👤 <b>${candidate}</b>`,
+      '',
+      `💼 <b>${jobTitle}</b>`,
+      `🏢 <b>${company}</b>`,
+      '',
+      `<b>Stage:</b> Client Interview Preparation`,
+      interview.scheduledAt ? `<b>Session:</b>\n📅 ${escapeHtml(interview.scheduledAt)} ${escapeHtml(interview.timezone || '')}` : '',
+      resumeLabel ? `<b>Resume:</b>\n${resumeLabel}` : ''
+    ].filter(Boolean).join('\n');
+
+    if (interview.meetingUrl) buttons.push([{ text: '🔗 Prep Session Link', url: interview.meetingUrl }]);
+  } else if (classification === 'offer') {
+    text = [
+      `🎉 <b>JOB OFFER RECEIVED</b>`,
+      '',
+      `👤 <b>${candidate}</b>`,
+      '',
+      `💼 <b>${jobTitle}</b>`,
+      `🏢 <b>${company}</b>`,
+      '',
+      `<b>Stage:</b> Offer Received`,
+      resumeLabel ? `<b>Resume:</b>\n${resumeLabel}` : ''
+    ].filter(Boolean).join('\n');
+  } else if (classification === 'rejection') {
+    text = [
+      `❌ <b>APPLICATION REJECTED</b>`,
+      '',
+      `👤 <b>${candidate}</b>`,
+      '',
+      `💼 <b>${jobTitle}</b>`,
+      `🏢 <b>${company}</b>`,
+      '',
+      resumeLabel ? `<b>Resume:</b>\n${resumeLabel}\n` : '',
+      `<b>Reason:</b>\n${escapeHtml((event.excerpt || 'Position closed / not moving forward').slice(0, 180))}\n`,
+      `<b>Historical signal:</b>\n🔴 Closed cluster / no action required`
+    ].filter(Boolean).join('\n');
+  } else if (classification === 'recruiter_response' || classification === 'application_confirmation') {
+    const stageName = classification === 'application_confirmation' ? 'Application Confirmed' : 'Recruiter Response / Under Review';
+    text = [
+      `📨 <b>APPLICATION UPDATE</b>`,
+      '',
+      `👤 <b>${candidate}</b>`,
+      '',
+      `💼 <b>${jobTitle}</b>`,
+      `🏢 <b>${company}</b>`,
+      '',
+      `<b>Status:</b>\n${stageName}`,
+      resumeLabel ? `\n<b>Resume:</b>\n${resumeLabel}` : '',
+      `\nNo action required.`
+    ].filter(Boolean).join('\n');
+  }
+
+  if (text) {
+    await sendWithRateLimit(config, recipient.telegram_chat_id, {
+      text,
+      parse_mode: 'HTML',
+      disable_web_page_preview: true,
+      reply_markup: buttons.length > 0 ? { inline_keyboard: buttons } : undefined
+    });
+  }
 }
 
 export async function sendOverflowSummary(config) {

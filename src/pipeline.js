@@ -17,7 +17,7 @@ import {
 } from './jobStore.js';
 import { notifyRunSummary } from './notifications.js';
 import { loadCvData } from './cvParser.js';
-import { sendReviewNotification, resetReviewNotifCount, sendOverflowSummary } from './telegramBot.js';
+import { sendReviewNotification, sendAutoApplyNotification, resetReviewNotifCount, sendOverflowSummary } from './telegramBot.js';
 import { withRetry } from './retry.js';
 import { runScrapers } from './scrapers/index.js';
 import { optimizeApplication, saveOptimizerArtifacts } from './applicationOptimizer.js';
@@ -313,6 +313,7 @@ export async function runJobHunt(config, options = {}) {
           runSummary.jobsAutoApplyAttempts += 1;
           const limitLabel = Number.isFinite(autoApplyBudget.limit) ? String(autoApplyBudget.limit) : 'unlimited';
           await appendLog(`Auto-apply attempt ${attemptNumber}/${limitLabel}: ${job.title}`, config);
+          await sendAutoApplyNotification({ ...job, cluster: local.cluster }, analysis, config, 'starting');
           const applyResult = await attemptApplicationOnce(job, optimizer, config);
           row.status = statusForApplicationResult(applyResult);
           if (applyResult.outcome === ApplicationOutcome.APPLIED_SUCCESSFULLY) {
@@ -328,6 +329,7 @@ export async function runJobHunt(config, options = {}) {
               appliedAt: new Date().toISOString()
             });
             await updateProfileLearning(config, { job, status: 'applied', score: optimizer.application_score });
+            await sendAutoApplyNotification({ ...job, cluster: local.cluster }, analysis, config, 'success');
           } else if (applyResult.outcome === ApplicationOutcome.REQUIRES_MANUAL_REVIEW) {
             runSummary.jobsQueuedForReview += 1;
             await addReviewJob(job, analysis, applyResult.reason, config, applyResult);
@@ -344,6 +346,7 @@ export async function runJobHunt(config, options = {}) {
             // sent. Notify again so the user can act on the manual-review reason.
             await sendReviewNotification({
               ...job,
+              cluster: local.cluster,
               reviewReason: applyResult.reason || 'Application requires manual review.'
             }, optimizer.application_score, config);
             await appendLog(`Queued for manual review: ${job.title} - ${applyResult.reason}`, config);
@@ -358,6 +361,7 @@ export async function runJobHunt(config, options = {}) {
               application: applyResult,
               retryCount: (existing?.retryCount || 0) + 1
             });
+            await sendAutoApplyNotification({ ...job, cluster: local.cluster }, analysis, config, 'failed', applyResult.reason);
           }
           await appendLog(`${row.status.toUpperCase()}: ${job.title} - ${applyResult.reason}`, config);
         }
@@ -373,7 +377,13 @@ export async function runJobHunt(config, options = {}) {
           gemini,
           optimizer
         });
-        await sendReviewNotification({ ...job, reviewReason }, optimizer.application_score, config);
+        await sendReviewNotification({
+          ...job,
+          cluster: local.cluster,
+          matchedSkills: local.matchedSkills,
+          missingSkills: local.missingSkills,
+          reviewReason
+        }, optimizer.application_score, config);
         await updateProfileLearning(config, { job, status: 'reviewed', score: optimizer.application_score });
         await appendLog(`Queued for review: ${job.title} (${optimizer.application_score}) - ${reviewReason}`, config);
       } else {
