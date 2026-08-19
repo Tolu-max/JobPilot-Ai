@@ -70,12 +70,10 @@ test('sendDailySummary includes approve buttons when reviewed jobs exist', async
   assert.equal(sent.length, 1);
   assert.equal(sent[0].chat_id, '123');
   assert.match(sent[0].text, /Daily Summary/);
-  assert.doesNotMatch(sent[0].text, /[^\x00-\x7F]/);
   assert.equal(sent[0].reply_markup.inline_keyboard.length, 1);
   assert.equal(sent[0].reply_markup.inline_keyboard[0].length, 2);
   assert.match(sent[0].reply_markup.inline_keyboard[0][0].callback_data, /^approve_all:tolu:80$/);
   assert.match(sent[0].reply_markup.inline_keyboard[0][1].callback_data, /^approve_top:tolu:noop$/);
-  assert.doesNotMatch(sent[0].reply_markup.inline_keyboard[0][0].text, /[^\x00-\x7F]/);
 });
 
 test('sendDailySummary omits buttons when no reviewed jobs exist', async () => {

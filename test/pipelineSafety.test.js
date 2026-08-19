@@ -51,8 +51,8 @@ test('terminal application outcomes stop automatic retries', () => {
   }), false);
 });
 
-test('AI consideration floor defaults to 40', () => {
-  assert.equal(getAiConsiderationFloor({}), 40);
+test('AI consideration floor defaults to 70', () => {
+  assert.equal(getAiConsiderationFloor({}), 70);
   assert.equal(getAiConsiderationFloor({ aiConsiderationFloor: 45 }), 45);
 });
 

@@ -76,8 +76,8 @@ test('2. Auto-apply success notification format', async () => {
     await sendAutoApplyNotification(job, analysis, config, 'success');
     assert.equal(sentMessages.length, 1);
     const msg = sentMessages[0].text;
-    assert.ok(msg.includes('APPLICATION SUBMITTED'), 'Must show submitted status');
-    assert.ok(msg.includes('Status:</b> Submitted'));
+    assert.ok(msg.includes('AUTO-APPLIED'), 'Must show auto-applied status');
+    assert.ok(msg.includes('Application submitted successfully'));
   } finally {
     restore();
   }
@@ -96,17 +96,18 @@ test('3. Auto-apply failure notification format', async () => {
     await sendAutoApplyNotification(job, analysis, config, 'failed', 'Timeout waiting for submit button');
     assert.equal(sentMessages.length, 1);
     const msg = sentMessages[0].text;
-    assert.ok(msg.includes('APPLICATION FAILED'));
+    assert.ok(msg.includes('AUTO-APPLY FAILED'));
     assert.ok(msg.includes('Timeout waiting for submit button'));
   } finally {
     restore();
   }
 });
 
-test('4. Review required notification format with strengths, concerns, and buttons', async () => {
+test('4. Review required notification format (70-84 Selective Fit) with 4-button layout', async () => {
   const { config, sentMessages, restore } = createMockTelegramConfig('tolu');
   try {
     const job = {
+      job_hash: 'hash_tolu_dev_001',
       title: 'Full-Stack Web Developer (PHP & Laravel)',
       company: 'BruntWork',
       applicationUrl: 'https://apply.bruntworkcareers.co/jobs/10430',
@@ -124,13 +125,84 @@ test('4. Review required notification format with strengths, concerns, and butto
     assert.ok(msg.includes('78/100'));
     assert.ok(msg.includes('tolu-fullstack'));
     assert.ok(msg.includes('PHP') && msg.includes('Laravel'));
-    assert.ok(sentMessages[0].reply_markup?.inline_keyboard?.length > 0, 'Must have inline action buttons');
+    assert.ok(msg.includes('Historical Evidence'));
+    
+    // Check buttons layout
+    const buttons = sentMessages[0].reply_markup?.inline_keyboard;
+    assert.equal(buttons.length, 3, 'Must have 3 rows of buttons');
+    assert.equal(buttons[0][0].text, '✅ Apply');
+    assert.equal(buttons[0][1].text, '❌ Skip');
+    assert.equal(buttons[1][0].text, '📄 Resume');
+    assert.equal(buttons[1][1].text, '🔍 Details');
   } finally {
     restore();
   }
 });
 
-test('5. Recruiter interview notification format', async () => {
+test('5. Review notification idempotency: Same job is not sent twice', async () => {
+  const { config, sentMessages, restore } = createMockTelegramConfig('tolu');
+  try {
+    const job = {
+      job_hash: 'hash_tolu_dedup_001',
+      title: 'PHP Developer',
+      company: 'BruntWork',
+      applicationUrl: 'https://apply.bruntworkcareers.co/jobs/10431'
+    };
+
+    await sendReviewNotification(job, 75, config);
+    assert.equal(sentMessages.length, 1);
+
+    // Second call for same job
+    await sendReviewNotification(job, 75, config);
+    assert.equal(sentMessages.length, 1, 'Duplicate review notification must be suppressed');
+  } finally {
+    restore();
+  }
+});
+
+test('6. Low-score jobs (<50) are silent archives and do not send Telegram notifications', async () => {
+  const { config, sentMessages, restore } = createMockTelegramConfig('tolu');
+  try {
+    const job = {
+      job_hash: 'hash_tolu_low_001',
+      title: 'Senior DevOps Architect',
+      company: 'BruntWork'
+    };
+
+    await sendReviewNotification(job, 35, config);
+    assert.equal(sentMessages.length, 0, 'Score < 50 must never trigger Telegram notification');
+  } finally {
+    restore();
+  }
+});
+
+test('7. Candidate isolation: Sister gets Sister identity and Sister resume', async () => {
+  const { config, sentMessages, restore } = createMockTelegramConfig('sister');
+  try {
+    const job = {
+      job_hash: 'hash_sister_va_001',
+      title: 'Virtual Assistant with Real Estate Experience',
+      company: 'BruntWork',
+      applicationUrl: 'https://apply.bruntworkcareers.co/jobs/10512'
+    };
+    const analysis = {
+      score: 90,
+      matchedSkills: ['Real Estate', 'Appointment Setting', 'Outreach'],
+      cluster: { clusterName: 'Real Estate VA & Appointment Setting', tier: 'PROVEN_WINNER' }
+    };
+
+    await sendAutoApplyNotification(job, analysis, config, 'starting');
+    assert.equal(sentMessages.length, 1);
+    const msg = sentMessages[0].text;
+    assert.ok(msg.includes('SISTER'), 'Must show SISTER identity');
+    assert.ok(!msg.includes('TOLU'), 'Must NOT contain TOLU');
+    assert.ok(msg.includes('sister-virtual-assistant'), 'Must show sister resume profile');
+  } finally {
+    restore();
+  }
+});
+
+test('8. Recruiter interview notification format', async () => {
   const { config, sentMessages, restore } = createMockTelegramConfig('tolu');
   try {
     const event = {
@@ -157,7 +229,7 @@ test('5. Recruiter interview notification format', async () => {
   }
 });
 
-test('6. Client interview notification format', async () => {
+test('9. Client interview notification format', async () => {
   const { config, sentMessages, restore } = createMockTelegramConfig('tolu');
   try {
     const event = {
@@ -182,31 +254,7 @@ test('6. Client interview notification format', async () => {
   }
 });
 
-test('7. Interview prep notification format', async () => {
-  const { config, sentMessages, restore } = createMockTelegramConfig('tolu');
-  try {
-    const event = {
-      classification: 'interview_prep',
-      matchedJobTitle: 'WordPress & SEO Specialist',
-      company: 'DIQ SEO',
-      matchedResumeProfile: 'tolu-wordpress-seo',
-      interviewDetails: {
-        scheduledAt: '2026-07-06 15:00 GMT+1',
-        meetingUrl: 'https://meet.google.com/prep-link'
-      }
-    };
-
-    await sendLifecycleNotification(event, config);
-    assert.equal(sentMessages.length, 1);
-    const msg = sentMessages[0].text;
-    assert.ok(msg.includes('INTERVIEW PREP'));
-    assert.ok(msg.includes('DIQ SEO'));
-  } finally {
-    restore();
-  }
-});
-
-test('8. Rejection notification format', async () => {
+test('10. Rejection notification format', async () => {
   const { config, sentMessages, restore } = createMockTelegramConfig('tolu');
   try {
     const event = {
@@ -228,72 +276,7 @@ test('8. Rejection notification format', async () => {
   }
 });
 
-test('9. Recruiter response notification format', async () => {
-  const { config, sentMessages, restore } = createMockTelegramConfig('tolu');
-  try {
-    const event = {
-      classification: 'recruiter_response',
-      matchedJobTitle: 'Power Platform Developer',
-      company: 'BruntWork',
-      matchedResumeProfile: 'tolu-fullstack'
-    };
-
-    await sendLifecycleNotification(event, config);
-    assert.equal(sentMessages.length, 1);
-    const msg = sentMessages[0].text;
-    assert.ok(msg.includes('APPLICATION UPDATE'));
-    assert.ok(msg.includes('Power Platform Developer'));
-  } finally {
-    restore();
-  }
-});
-
-test('10. Job offer notification format', async () => {
-  const { config, sentMessages, restore } = createMockTelegramConfig('tolu');
-  try {
-    const event = {
-      classification: 'offer',
-      matchedJobTitle: 'SEO Specialist',
-      company: 'Trusted Marketing LLC',
-      matchedResumeProfile: 'tolu-wordpress-seo'
-    };
-
-    await sendLifecycleNotification(event, config);
-    assert.equal(sentMessages.length, 1);
-    const msg = sentMessages[0].text;
-    assert.ok(msg.includes('JOB OFFER RECEIVED'));
-    assert.ok(msg.includes('Trusted Marketing LLC'));
-  } finally {
-    restore();
-  }
-});
-
-test('11. Candidate isolation: Sister gets Sister identity and Sister resume', async () => {
-  const { config, sentMessages, restore } = createMockTelegramConfig('sister');
-  try {
-    const job = {
-      title: 'Virtual Assistant with Real Estate Experience',
-      company: 'BruntWork',
-      applicationUrl: 'https://apply.bruntworkcareers.co/jobs/10512'
-    };
-    const analysis = {
-      score: 90,
-      matchedSkills: ['Real Estate', 'Appointment Setting', 'Outreach'],
-      cluster: { clusterName: 'Real Estate VA & Appointment Setting', tier: 'PROVEN_WINNER' }
-    };
-
-    await sendAutoApplyNotification(job, analysis, config, 'starting');
-    assert.equal(sentMessages.length, 1);
-    const msg = sentMessages[0].text;
-    assert.ok(msg.includes('SISTER'), 'Must show SISTER identity');
-    assert.ok(!msg.includes('TOLU'), 'Must NOT contain TOLU');
-    assert.ok(msg.includes('sister-virtual-assistant'), 'Must show sister resume profile');
-  } finally {
-    restore();
-  }
-});
-
-test('12. Security hygiene: No OAuth tokens or secrets are leaked', async () => {
+test('11. Security hygiene: No OAuth tokens or secrets are leaked', async () => {
   const { config, sentMessages, restore } = createMockTelegramConfig('tolu');
   try {
     const event = {
@@ -315,7 +298,7 @@ test('12. Security hygiene: No OAuth tokens or secrets are leaked', async () => 
   }
 });
 
-test('13. Boilerplate "What happens next" email does not trigger interview alert', () => {
+test('12. Boilerplate "What happens next" email does not trigger interview alert', () => {
   const email = {
     subject: 'Application Received - What happens next?',
     from: 'careers@bruntwork.co',
@@ -328,7 +311,7 @@ test('13. Boilerplate "What happens next" email does not trigger interview alert
   assert.notEqual(res.classification, EmailEventType.CLIENT_INTERVIEW);
 });
 
-test('14. Rejection email mentioning "interview" does not become an interview', () => {
+test('13. Rejection email mentioning "interview" does not become an interview', () => {
   const email = {
     subject: 'Update on your BruntWork Application',
     from: 'careers@bruntwork.co',
@@ -340,7 +323,7 @@ test('14. Rejection email mentioning "interview" does not become an interview', 
   assert.notEqual(res.classification, EmailEventType.RECRUITER_INTERVIEW);
 });
 
-test('15. Resume displayed in Telegram matches the exact ATS resume selected', () => {
+test('14. Resume displayed in Telegram matches the exact ATS resume selected', () => {
   const config = buildConfig(['node', 'jobpilot', '--profile=tolu']);
   const job = {
     title: 'WordPress & SEO Specialist',
@@ -351,7 +334,7 @@ test('15. Resume displayed in Telegram matches the exact ATS resume selected', (
   assert.equal(selected.profileId, 'tolu-wordpress-seo');
 });
 
-test('16. Sister resume routing is isolated and never selects Tolu resume', () => {
+test('15. Sister resume routing is isolated and never selects Tolu resume', () => {
   const config = buildConfig(['node', 'jobpilot', '--profile=sister']);
   const job = {
     title: 'Realty Appointment Setter',

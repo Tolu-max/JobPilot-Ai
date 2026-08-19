@@ -809,9 +809,9 @@ function reviewReasonForOptimizer(optimizer) {
 }
 
 export function getAiConsiderationFloor(config = {}) {
-  const explicit = Number.parseInt(config.aiConsiderationFloor ?? process.env.AI_CONSIDERATION_FLOOR, 10);
+  const explicit = Number.parseInt(config.aiConsiderationFloor ?? config.minLocalScoreForAi ?? process.env.AI_CONSIDERATION_FLOOR, 10);
   if (Number.isFinite(explicit)) return explicit;
-  return 40;
+  return 70;
 }
 
 async function attemptApplicationOnce(job, appPackage, config) {

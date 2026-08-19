@@ -15,8 +15,10 @@ let pollingActive = false;
 
 // Track how many review notifications sent per run to limit noise
 let reviewNotifCount = 0;
+let overflowCount = 0;
 const MAX_REVIEW_NOTIFS_PER_RUN = 50;
-const MIN_REVIEW_SCORE = 1;
+const MIN_REVIEW_SCORE = 50;
+let processedReviewKeys = new Set();
 
 function getStateFile(config) {
   return path.join(config?.profileDir || path.join(process.cwd(), 'data'), 'telegramState.json');
@@ -27,6 +29,9 @@ async function loadTelegramState(config) {
     const raw = await fs.readFile(getStateFile(config), 'utf-8');
     const state = JSON.parse(raw);
     if (typeof state.lastUpdateId === 'number') lastUpdateId = state.lastUpdateId;
+    if (Array.isArray(state.processedReviewKeys)) {
+      processedReviewKeys = new Set(state.processedReviewKeys);
+    }
   } catch { /* first run */ }
 }
 
@@ -34,7 +39,11 @@ async function saveTelegramState(config) {
   try {
     const file = getStateFile(config);
     await fs.mkdir(path.dirname(file), { recursive: true });
-    await fs.writeFile(file, JSON.stringify({ lastUpdateId }, null, 2), 'utf-8');
+    const keysArray = Array.from(processedReviewKeys).slice(-2000);
+    await fs.writeFile(file, JSON.stringify({
+      lastUpdateId,
+      processedReviewKeys: keysArray
+    }, null, 2), 'utf-8');
   } catch { /* non-fatal */ }
 }
 
@@ -43,9 +52,6 @@ export function resetReviewNotifCount() {
   overflowCount = 0;
 }
 
-// ---------------------------------------------------------------------------
-// Telegram MarkdownV2 escaper — escapes ALL special chars required by the spec
-// ---------------------------------------------------------------------------
 function escapeMarkdown(text) {
   return String(text || '').replace(/[_*[\]()~`>#+\-=|{}.!\\]/g, '\\$&');
 }
@@ -135,11 +141,6 @@ function cleanTelegramText(value) {
     cleaned = cleaned.split(pattern).join(replacement);
   }
   return cleaned
-    // Telegram accepts Unicode, but forcing ASCII prevents broken mojibake from
-    // incorrectly decoded job-board content or legacy notification templates.
-    .normalize('NFKD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^\x00-\x7F]/g, '')
     .replace(/[ \t]{2,}/g, ' ')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
@@ -231,7 +232,7 @@ export async function sendAutoApplyNotification(job, analysis = {}, config = {},
 
   const selectedResume = selectResumeForJob(config, job);
   const resProfile = getResumeProfile(config.profileName || 'tolu', selectedResume.profileId);
-  const resumeLabel = escapeHtml(resProfile?.title ? `${resProfile.title} (${selectedResume.profileId})` : selectedResume.profileId);
+  const resumeLabel = escapeHtml(resProfile?.title ? `${resProfile.title}\n(${selectedResume.profileId})` : selectedResume.profileId);
 
   let text = '';
   const buttons = [];
@@ -243,53 +244,66 @@ export async function sendAutoApplyNotification(job, analysis = {}, config = {},
       : '✓ Strong profile and skill alignment\n✓ Verified historical success pattern\n✓ No hard requirement conflicts';
 
     text = [
-      `🚀 <b>AUTO-APPLYING</b>`,
+      `━━━━━━━━━━━━━━━━━━━━`,
+      `🚀 <b>JOBPILOT — AUTO-APPLYING</b>`,
       '',
-      `👤 <b>${candidate}</b>`,
+      `👤 <b>Candidate:</b> ${candidate}`,
+      `📌 <b>Role:</b> ${title}`,
+      `🏢 <b>Company:</b> ${company}`,
       '',
-      `💼 <b>${title}</b>`,
-      `🏢 <b>${company}</b>`,
+      `📊 <b>Match:</b> ${escapeHtml(score)}/100`,
+      `${clusterBadge} <b>Tier:</b> ${clusterName}`,
       '',
-      `<b>Match:</b> ${escapeHtml(score)}/100`,
-      `<b>Cluster:</b> ${clusterBadge} ${clusterName}`,
-      `<b>Resume:</b> ${resumeLabel}`,
+      `📄 <b>Resume:</b>\n${resumeLabel}`,
       '',
       `<b>Why:</b>`,
       whyLines,
       '',
-      `<b>Status:</b>`,
-      `⏳ Application being submitted...`
+      `⏳ <b>Status:</b> Application being submitted...`,
+      `━━━━━━━━━━━━━━━━━━━━`
     ].filter(Boolean).join('\n');
 
     if (url) buttons.push([{ text: '🔗 View Job', url }]);
   } else if (status === 'success') {
     text = [
-      `✅ <b>APPLICATION SUBMITTED</b>`,
+      `━━━━━━━━━━━━━━━━━━━━`,
+      `🎯 <b>JOBPILOT — AUTO-APPLIED</b>`,
       '',
-      `👤 <b>${candidate}</b>`,
+      `👤 <b>Candidate:</b> ${candidate}`,
+      `📌 <b>Role:</b> ${title}`,
+      `🏢 <b>Company:</b> ${company}`,
       '',
-      `💼 <b>${title}</b>`,
-      `🏢 <b>${company}</b>`,
+      `📊 <b>Match:</b> ${escapeHtml(score)}/100`,
+      `${clusterBadge} <b>Tier:</b> ${clusterName}`,
       '',
-      `<b>Match:</b> ${escapeHtml(score)}/100`,
-      `<b>Cluster:</b> ${clusterBadge} ${clusterName}`,
-      `<b>Resume:</b> ${resumeLabel}`,
+      `📄 <b>Resume:</b>\n${resumeLabel}`,
       '',
-      `<b>Status:</b> Submitted`
+      `✅ <b>Application submitted successfully</b>`,
+      '',
+      `📈 <b>Historical cluster:</b>\n${clusterName}`,
+      url ? `\n🔗 <b>Job:</b> ${url}` : '',
+      `━━━━━━━━━━━━━━━━━━━━`
     ].filter(Boolean).join('\n');
 
-    if (url) buttons.push([{ text: '🔗 View Job', url }]);
+    if (url) buttons.push([{ text: '🔗 Open Job', url }]);
   } else if (status === 'failed') {
     text = [
-      `❌ <b>APPLICATION FAILED</b>`,
+      `━━━━━━━━━━━━━━━━━━━━`,
+      `🚨 <b>JOBPILOT — AUTO-APPLY FAILED</b>`,
       '',
-      `👤 <b>${candidate}</b>`,
+      `👤 <b>Candidate:</b> ${candidate}`,
+      `📌 <b>Role:</b> ${title}`,
+      `🏢 <b>Company:</b> ${company}`,
       '',
-      `💼 <b>${title}</b>`,
-      `🏢 <b>${company}</b>`,
+      `📊 <b>Match:</b> ${escapeHtml(score)}/100`,
+      `${clusterBadge} <b>Tier:</b> ${clusterName}`,
       '',
-      `<b>Resume:</b> ${resumeLabel}`,
-      `<b>Failure Reason:</b> ${escapeHtml(errorReason || 'Submission error')}`
+      `📄 <b>Resume:</b>\n${resumeLabel}`,
+      '',
+      `❌ <b>Failure Stage:</b> Submission Form`,
+      `<b>Safe Error:</b> ${escapeHtml(errorReason || 'Submission error')}`,
+      url ? `\n🔗 <b>Job:</b> ${url}` : '',
+      `━━━━━━━━━━━━━━━━━━━━`
     ].filter(Boolean).join('\n');
 
     if (url) buttons.push([{ text: '🔗 View Job', url }]);
@@ -306,11 +320,23 @@ export async function sendAutoApplyNotification(job, analysis = {}, config = {},
 }
 
 async function sendReviewNotificationHtml(job, score, config) {
+  // Policy 1: Score < 50 is silent archive (zero Telegram)
+  if (score < 50) return;
+
   const recipient = resolveTelegramRecipient(config, { job });
   const candidate = resolveCandidateDisplayName(config);
   const callbackProfile = profileCallbackKey(config);
   const jobHash = job.job_hash || job.hash || hashJob(job) || '';
   const shortHash = jobHash.slice(0, 16);
+
+  // Policy 5: Deterministic Telegram review key idempotency
+  const reviewKey = `${config.profileName || 'tolu'}:${shortHash}:review`;
+  if (processedReviewKeys.has(reviewKey)) {
+    return;
+  }
+  processedReviewKeys.add(reviewKey);
+  await saveTelegramState(config);
+
   const title = escapeHtml(job.title || 'Untitled role');
   const company = escapeHtml(job.company || 'BruntWork');
   const url = job.applicationUrl || job.job_url || '';
@@ -321,56 +347,84 @@ async function sendReviewNotificationHtml(job, score, config) {
 
   const selectedResume = selectResumeForJob(config, job);
   const resProfile = getResumeProfile(config.profileName || 'tolu', selectedResume.profileId);
-  const resumeLabel = escapeHtml(resProfile?.title ? `${resProfile.title} (${selectedResume.profileId})` : selectedResume.profileId);
+  const resumeLabel = escapeHtml(resProfile?.title ? `${resProfile.title}\n(${selectedResume.profileId})` : selectedResume.profileId);
 
   const matchedSkills = Array.isArray(job.matchedSkills) ? job.matchedSkills : (job.local?.matchedSkills || []);
-  const strongMatches = matchedSkills.slice(0, 4).map(s => `✓ ${escapeHtml(s)}`).join('\n') || '✓ Core skills and background match';
+  const strongMatches = matchedSkills.slice(0, 4).map(s => `• ${escapeHtml(s)}`).join('\n') || '• Core skills and background match';
 
   const missingSkills = Array.isArray(job.missingSkills) ? job.missingSkills : (job.local?.missingSkills || []);
   const reviewReason = job.reviewReason || job.review_reason || '';
   const concernsList = [];
-  if (reviewReason && !reviewReason.includes('passed')) concernsList.push(`⚠️ ${escapeHtml(reviewReason)}`);
+  if (reviewReason && !reviewReason.includes('passed')) concernsList.push(`• ${escapeHtml(reviewReason)}`);
   for (const m of missingSkills.slice(0, 2)) {
-    concernsList.push(`⚠️ ${escapeHtml(m)} not explicitly verified`);
+    concernsList.push(`• ${escapeHtml(m)} not explicitly verified`);
   }
-  const concerns = concernsList.join('\n') || '⚠️ Manual review recommended before applying';
+  const concerns = concernsList.join('\n');
+
+  // Derive evidence based on real historical conversion audit
+  let historicalEvidence = 'Transferable role family requiring selective manual review.';
+  const prof = String(config.profileName || 'tolu').toLowerCase();
+  const cNameLower = String(cluster.clusterName || '').toLowerCase();
+  if (prof === 'tolu' && (cNameLower.includes('wordpress') || cNameLower.includes('seo'))) {
+    historicalEvidence = 'This cluster has previously produced recruiter and client interviews.';
+  } else if (prof === 'tolu' && (cNameLower.includes('laravel') || cNameLower.includes('php') || cNameLower.includes('full-stack'))) {
+    historicalEvidence = 'This cluster has previously produced recruiter interviews.';
+  } else if (prof === 'sister' && (cNameLower.includes('real estate') || cNameLower.includes('appointment') || cNameLower.includes('outreach'))) {
+    historicalEvidence = 'This cluster has previously produced recruiter interviews.';
+  }
+
+  const isLowPriority = score < 70;
+  const header = isLowPriority
+    ? `🟠 <b>JOBPILOT — LOW PRIORITY REVIEW</b>`
+    : `🎯 <b>JOBPILOT — REVIEW REQUIRED</b>`;
+  const tierLabel = isLowPriority ? 'LOW PRIORITY REVIEW' : (cluster.tier === 'PROVEN_WINNER' ? 'PROVEN WINNER' : 'SELECTIVE FIT');
 
   const text = [
-    `🟡 <b>REVIEW REQUIRED</b>`,
+    `━━━━━━━━━━━━━━━━━━━━`,
+    header,
     '',
-    `👤 <b>${candidate}</b>`,
+    `👤 <b>Candidate:</b> ${candidate}`,
+    `📌 <b>Role:</b> ${title}`,
+    `🏢 <b>Company:</b> ${company}`,
     '',
-    `💼 <b>${title}</b>`,
-    `🏢 <b>${company}</b>`,
+    `📊 <b>Match:</b> ${escapeHtml(score)}/100`,
+    `${clusterBadge} <b>Tier:</b> ${escapeHtml(tierLabel)}`,
     '',
-    `<b>Match:</b> ${escapeHtml(score)}/100`,
-    `<b>Cluster:</b> ${clusterBadge} ${clusterName}`,
-    `<b>Resume:</b> ${resumeLabel}`,
+    `📄 <b>Resume:</b>\n${resumeLabel}`,
     '',
-    `<b>Strong matches:</b>`,
-    strongMatches,
+    `🎯 <b>Historical Fit:</b>\n${clusterName}`,
     '',
-    `<b>Potential concerns:</b>`,
-    concerns,
+    `📈 <b>Historical Evidence:</b>\n${escapeHtml(historicalEvidence)}`,
     '',
-    `<b>Historical signal:</b>`,
-    `${clusterBadge} ${clusterName}`
+    `✅ <b>Strong Matches:</b>\n${strongMatches}`,
+    concerns ? `\n⚠️ <b>Missing / Potential Concerns:</b>\n${concerns}` : '',
+    url ? `\n🔗 <b>Job:</b> ${url}` : '',
+    '',
+    `<b>Decision:</b>`,
+    `━━━━━━━━━━━━━━━━━━━━`
   ].filter(Boolean).join('\n');
 
-  const firstRow = [];
-  if (url) firstRow.push({ text: '🔗 View Job', url });
-  firstRow.push({ text: '✅ Apply', callback_data: `accept:${callbackProfile}:${shortHash}` });
-  firstRow.push({ text: '❌ Skip', callback_data: `reject:${callbackProfile}:${shortHash}` });
+  const rows = [
+    [
+      { text: '✅ Apply', callback_data: `accept:${callbackProfile}:${shortHash}` },
+      { text: '❌ Skip', callback_data: `reject:${callbackProfile}:${shortHash}` }
+    ],
+    [
+      { text: '📄 Resume', callback_data: `resume:${callbackProfile}:${shortHash}` },
+      { text: '🔍 Details', callback_data: `details:${callbackProfile}:${shortHash}` }
+    ]
+  ];
+
+  if (url) {
+    rows.push([{ text: '🔗 Open Job', url }]);
+  }
 
   await sendWithRateLimit(config, recipient.telegram_chat_id, {
     text,
     parse_mode: 'HTML',
     disable_web_page_preview: true,
     reply_markup: {
-      inline_keyboard: [
-        firstRow,
-        [{ text: '📄 Details', callback_data: `details:${callbackProfile}:${shortHash}` }]
-      ]
+      inline_keyboard: rows
     }
   });
 }
@@ -633,6 +687,18 @@ async function handleCallback(callbackQuery, config, allConfigs) {
   if (action === 'accept') {
     const record = await findJobByHash(profileConfig, jobHash, allConfigs);
     if (record) {
+      // Phase 8: Stale Job Protection
+      if (record.status === 'applied' || record.status === 'hired') {
+        await answerCallback(config, callbackQuery.id, '⚠️ Job already applied/submitted!');
+        await editMessageButtons(config, chatId, messageId, '⚠️ ALREADY APPLIED');
+        return;
+      }
+      if (record.status === 'expired' || record.status === 'closed') {
+        await answerCallback(config, callbackQuery.id, '⚠️ Job is no longer available/expired.');
+        await editMessageButtons(config, chatId, messageId, '⚠️ EXPIRED');
+        return;
+      }
+
       // Store all fields needed for application — including applicationUrl from job_url
       await upsertJobRecord(profileConfig, record, 'pending_apply', {
         decision: 'apply',
