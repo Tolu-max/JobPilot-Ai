@@ -265,6 +265,9 @@ async function bootstrapVolumeDirs() {
   const dataDir = process.env.JOBPILOT_DATA_DIR || '/app/data';
   const names = ['profiles', 'logs', 'events', 'review', 'debug', 'browser-profiles', 'test-results'];
 
+  // Clean transient and bulky debug/test/browser-profile dirs on volume to prevent ENOSPC
+  await cleanVolumeStorage(dataDir);
+
   for (const name of names) {
     const source = path.resolve(process.cwd(), name);
     const target = path.join(dataDir, name);
@@ -284,4 +287,28 @@ async function bootstrapVolumeDirs() {
 
   process.env.JOBPILOT_PROFILE_BOOTSTRAPPED = '1';
   console.log(`[worker] linked persistent data directories from ${dataDir}`);
+}
+
+async function cleanVolumeStorage(dataDir) {
+  try {
+    const transientDirs = ['debug', 'test-results', 'browser-profiles', '.railway-inspect', 'tmp'];
+    for (const t of transientDirs) {
+      const target = path.join(dataDir, t);
+      await fs.rm(target, { recursive: true, force: true }).catch(() => {});
+    }
+
+    // Prune oversized log files in logs directory
+    const logsDir = path.join(dataDir, 'logs');
+    const logFiles = await fs.readdir(logsDir).catch(() => []);
+    for (const f of logFiles) {
+      const p = path.join(logsDir, f);
+      const st = await fs.stat(p).catch(() => null);
+      if (st && st.size > 2 * 1024 * 1024) {
+        await fs.writeFile(p, '', 'utf8').catch(() => {});
+      }
+    }
+    console.log('[worker] Volume transient storage cleaned.');
+  } catch (err) {
+    console.warn('[worker] Volume cleaning non-fatal error:', err.message);
+  }
 }
