@@ -65,6 +65,7 @@ vars.txt
 scratch_*
 logs2.txt
 railway_logs.txt
+events/
 tmp-*
 .DS_Store
 

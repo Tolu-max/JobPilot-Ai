@@ -215,8 +215,7 @@ function cleanTelegramText(value) {
 }
 export async function sendReviewNotification(job, score, config) {
   const recipient = resolveTelegramRecipient(config, { job });
-  if (!config?.telegramBotToken || !recipient.telegram_chat_id) return false;
-  const minScore = config?.telegramReviewMinScore ?? MIN_REVIEW_SCORE;
+  const minScore = MIN_REVIEW_SCORE;
   if (score < minScore) return false;
   return sendReviewNotificationHtml(job, score, config);
 }
@@ -409,7 +408,7 @@ export async function sendAutoApplyNotification(job, analysis = {}, config = {},
 }
 
 async function sendReviewNotificationHtml(job, score, config) {
-  const minScore = config?.telegramReviewMinScore ?? MIN_REVIEW_SCORE;
+  const minScore = MIN_REVIEW_SCORE;
   if (score < minScore) return false;
 
   const recipient = resolveTelegramRecipient(config, { job });
@@ -456,27 +455,46 @@ async function sendReviewNotificationHtml(job, score, config) {
   const source = escapeHtml(job.source_site || job.source || 'Unknown');
   const summary = formatDescriptionForTelegram(job.description || job.raw?.description || '', 400);
 
-  let prefix = 'ℹ️ POTENTIAL MATCH';
-  if (score >= 85) prefix = '🔥 HOT MATCH';
-  else if (score >= 70) prefix = '⭐ GOOD MATCH';
+  const cluster = job.cluster || job.local?.cluster || {};
+  const clusterLabel = escapeHtml(cluster.clusterName || cluster.name || 'General Fit');
+  const shortResumeName = resolveShortResumeName(config, job);
+  const strongestReasons = formatStrongestReasons(job, job.local || {});
 
-  const text = [
-    `<b>JOBPILOT • ${prefix}</b>`,
-    `👤 ${candidate}`,
-    `📌 ${title}`,
-    `🏢 ${company}`,
-    `📊 ${score}/100 • ${source}`,
-    `📍 ${location}${salary ? ` • 💰 ${salary}` : ''}`,
-    '',
-    `🔎 ${summary}`,
-    url ? `🔗 <a href="${escapeHtml(url)}">Apply URL</a>` : ''
-  ].filter(Boolean).join('\n');
+  let textLines = [];
+  if (score >= 70) {
+    textLines = [
+      `🟡 <b>JOBPILOT • REVIEW</b>`,
+      `👤 ${candidate}`,
+      `📌 ${title}`,
+      `🏢 ${company}`,
+      `📊 ${score}/100 • ${clusterLabel}`,
+      `📄 ${shortResumeName}`,
+      `🔎`,
+      strongestReasons,
+      url ? `🔗 ${url}` : ''
+    ];
+  } else {
+    textLines = [
+      `🔵 <b>JOBPILOT • REVIEW</b>`,
+      `👤 ${candidate}`,
+      `📌 ${title}`,
+      `🏢 ${company}`,
+      `📊 ${score}/100 • Possible Fit`,
+      `📄 ${shortResumeName}`,
+      `⚠️ Weak historical fit`,
+      url ? `🔗 ${url}` : ''
+    ];
+  }
+
+  const text = textLines.filter(Boolean).join('\n');
 
   const buttons = [
     [
-      { text: '✅ Apply', callback_data: `accept:${callbackProfile}:${shortHash}` },
-      { text: '❌ Skip', callback_data: `reject:${callbackProfile}:${shortHash}` },
-      { text: '🤔 Maybe Later', callback_data: 'noop' }
+      { text: 'APPLY', callback_data: `accept:${callbackProfile}:${shortHash}` },
+      { text: 'SKIP', callback_data: `reject:${callbackProfile}:${shortHash}` }
+    ],
+    [
+      { text: 'Full Description', callback_data: `desc:${callbackProfile}:${shortHash}` }
     ]
   ];
 

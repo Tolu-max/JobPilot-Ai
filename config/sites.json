@@ -28,12 +28,12 @@
     "_disabled_reason": "Planned scraper; not implemented yet"
   },
   "indeed": {
-    "enabled": true,
+    "enabled": false,
     "priority": 16,
     "maxJobsPerRun": 30,
     "cooldownMinutes": 1,
     "autoApplyEnabled": true,
-    "timeoutMs": 60000
+    "timeoutMs": 120000
   },
   "glassdoor": {
     "enabled": false,
