@@ -1,0 +1,345 @@
+{
+  "bruntwork": {
+    "enabled": true,
+    "priority": 10,
+    "maxJobsPerRun": 100,
+    "cooldownMinutes": 1,
+    "autoApplyEnabled": true,
+    "timeoutMs": 1800000,
+    "jobsUrl": "https://bruntworkcareers.co/search"
+  },
+  "influx": {
+    "enabled": false,
+    "priority": 12,
+    "maxJobsPerRun": 25,
+    "cooldownMinutes": 1,
+    "autoApplyEnabled": false,
+    "timeoutMs": 120000,
+    "jobsUrl": "https://influx.com/careers/jobs",
+    "_disabled_reason": "Discovery only until an Influx role explicitly accepts Nigeria/Africa; Philippines-only roles are excluded"
+  },
+  "linkedin": {
+    "enabled": false,
+    "priority": 15,
+    "maxJobsPerRun": 20,
+    "cooldownMinutes": 1,
+    "autoApplyEnabled": false,
+    "timeoutMs": 120000,
+    "_disabled_reason": "Planned scraper; not implemented yet"
+  },
+  "indeed": {
+    "enabled": true,
+    "priority": 16,
+    "maxJobsPerRun": 30,
+    "cooldownMinutes": 1,
+    "autoApplyEnabled": true,
+    "timeoutMs": 60000
+  },
+  "glassdoor": {
+    "enabled": false,
+    "priority": 17,
+    "maxJobsPerRun": 20,
+    "cooldownMinutes": 1,
+    "autoApplyEnabled": true,
+    "timeoutMs": 15000,
+    "importPath": "glassdoor-import.json",
+    "_disabled_reason": "Local role import only. Glassdoor itself is not crawled; automatic submission is limited to direct audited ATS URLs in the import file."
+  },
+  "wellfound": {
+    "enabled": false,
+    "priority": 20,
+    "maxJobsPerRun": 10,
+    "cooldownMinutes": 1,
+    "autoApplyEnabled": false
+  },
+  "jobzilla": {
+    "enabled": false,
+    "priority": 150,
+    "maxJobsPerRun": 20,
+    "cooldownMinutes": 30,
+    "autoApplyEnabled": false,
+    "jobsUrl": "https://jobzilla.ng/"
+  },
+  "jobgurus": {
+    "enabled": false,
+    "priority": 151,
+    "maxJobsPerRun": 20,
+    "cooldownMinutes": 30,
+    "autoApplyEnabled": false,
+    "jobsUrl": "https://jobgurus.com.ng/jobs"
+  },
+  "greenhouse": {
+    "enabled": false,
+    "priority": 25,
+    "maxJobsPerRun": 25,
+    "cooldownMinutes": 30,
+    "autoApplyEnabled": true,
+    "timeoutMs": 120000,
+    "maxAgeDays": 14,
+    "_note": "Public Greenhouse Job Board API scraper. Configure boards per profile."
+  },
+  "weworkremotely": {
+    "enabled": false,
+    "priority": 30,
+    "maxJobsPerRun": 25,
+    "cooldownMinutes": 1,
+    "autoApplyEnabled": true,
+    "maxAgeDays": 14,
+    "remoteOnly": true,
+    "feedUrls": [
+      "https://weworkremotely.com/categories/remote-customer-support-jobs.rss",
+      "https://weworkremotely.com/categories/remote-sales-and-marketing-jobs.rss",
+      "https://weworkremotely.com/categories/remote-management-and-finance-jobs.rss",
+      "https://weworkremotely.com/categories/remote-design-jobs.rss",
+      "https://weworkremotely.com/categories/remote-programming-jobs.rss",
+      "https://weworkremotely.com/remote-jobs.rss"
+    ],
+    "jobsUrl": "https://weworkremotely.com/remote-job-rss-feed",
+    "_disabled_reason": "Temporarily paused because bot-protection pages prevent reliable automated application handoff."
+  },
+  "remoteok": {
+    "enabled": false,
+    "priority": 40,
+    "maxJobsPerRun": 50,
+    "cooldownMinutes": 1,
+    "autoApplyEnabled": false,
+    "_disabled_reason": "Apply flow redirects to remoteok.com/sign-up wall; adapter cannot resolve an outbound apply destination. Queued jobs retried forever and burned scheduler cycles."
+  },
+  "workingnomads": {
+    "enabled": false,
+    "priority": 28,
+    "maxJobsPerRun": 25,
+    "cooldownMinutes": 30,
+    "autoApplyEnabled": true,
+    "maxAgeDays": 14,
+    "remoteOnly": true,
+    "apiUrl": "https://www.workingnomads.com/jobsapi/_search"
+  },
+  "remoteco": {
+    "enabled": false,
+    "priority": 60,
+    "maxJobsPerRun": 10,
+    "cooldownMinutes": 1,
+    "autoApplyEnabled": false,
+    "_disabled_reason": "Returns 403 Forbidden"
+  },
+  "dailyremote": {
+    "enabled": false,
+    "priority": 70,
+    "maxJobsPerRun": 15,
+    "cooldownMinutes": 1,
+    "autoApplyEnabled": false,
+    "maxAgeDays": 14,
+    "remoteOnly": true
+  },
+  "remotive": {
+    "enabled": false,
+    "priority": 80,
+    "maxJobsPerRun": 50,
+    "cooldownMinutes": 1,
+    "autoApplyEnabled": false
+  },
+  "jobgether": {
+    "enabled": false,
+    "priority": 90,
+    "maxJobsPerRun": 20,
+    "cooldownMinutes": 1,
+    "autoApplyEnabled": false,
+    "_disabled_reason": "Planned scraper; not implemented yet"
+  },
+  "himalayas": {
+    "enabled": false,
+    "priority": 100,
+    "maxJobsPerRun": 50,
+    "cooldownMinutes": 1,
+    "autoApplyEnabled": false,
+    "timeoutMs": 180000,
+    "_disabled_reason": "Direct job and application pages are protected by Cloudflare bot verification walls, preventing automated browser application flow."
+  },
+  "dynamitejobs": {
+    "enabled": false,
+    "priority": 110,
+    "maxJobsPerRun": 20,
+    "cooldownMinutes": 1,
+    "autoApplyEnabled": false,
+    "_disabled_reason": "Planned scraper; not implemented yet"
+  },
+  "jobspresso": {
+    "enabled": false,
+    "priority": 120,
+    "maxJobsPerRun": 15,
+    "cooldownMinutes": 1,
+    "autoApplyEnabled": false,
+    "_disabled_reason": "RSS feed reachable but empty since 2026-05-13 (site appears dormant)"
+  },
+  "onlinejobsph": {
+    "enabled": false,
+    "priority": 130,
+    "maxJobsPerRun": 20,
+    "cooldownMinutes": 1,
+    "autoApplyEnabled": false,
+    "_disabled_reason": "Planned scraper; not implemented yet"
+  },
+  "jobberman": {
+    "enabled": false,
+    "priority": 140,
+    "maxJobsPerRun": 50,
+    "cooldownMinutes": 1,
+    "autoApplyEnabled": false,
+    "timeoutMs": 120000,
+    "jobsUrl": "https://www.jobberman.com/jobs/remote",
+    "remoteOnly": true,
+    "maxAgeDays": 30,
+    "_disabled_reason": "Temporarily paused while source freshness and application delivery are being improved."
+  },
+  "myjobmag": {
+    "enabled": false,
+    "priority": 145,
+    "maxJobsPerRun": 25,
+    "cooldownMinutes": 1,
+    "autoApplyEnabled": false,
+    "timeoutMs": 90000,
+    "jobsUrl": "https://www.myjobmag.com/jobs-by-type/remote",
+    "remoteOnly": true,
+    "maxAgeDays": 30
+  },
+  "hotnigerianjobs": {
+    "enabled": false,
+    "priority": 142,
+    "maxJobsPerRun": 25,
+    "cooldownMinutes": 30,
+    "autoApplyEnabled": false,
+    "timeoutMs": 60000,
+    "feedUrl": "http://www.hotnigerianjobs.com/feed/rss.xml",
+    "maxAgeDays": 30
+  },
+  "betternship": {
+    "enabled": false,
+    "priority": 160,
+    "maxJobsPerRun": 10,
+    "cooldownMinutes": 1,
+    "autoApplyEnabled": false
+  },
+  "arbeitnow": {
+    "enabled": false,
+    "priority": 27,
+    "maxJobsPerRun": 25,
+    "cooldownMinutes": 30,
+    "autoApplyEnabled": true,
+    "maxAgeDays": 14,
+    "remoteOnly": true,
+    "apiUrl": "https://www.arbeitnow.com/api/job-board-api"
+  },
+  "themuse": {
+    "enabled": false,
+    "priority": 180,
+    "maxJobsPerRun": 20,
+    "cooldownMinutes": 1,
+    "autoApplyEnabled": false,
+    "maxAgeDays": 14,
+    "remoteOnly": true,
+    "location": "Remote",
+    "categories": ["Customer Service", "Administrative"]
+  },
+  "jobicy": {
+    "enabled": false,
+    "priority": 190,
+    "maxJobsPerRun": 25,
+    "cooldownMinutes": 1,
+    "autoApplyEnabled": false,
+    "maxAgeDays": 14,
+    "remoteOnly": true,
+    "apiUrl": "https://jobicy.com/api/v2/remote-jobs"
+  },
+  "careernest": {
+    "enabled": false,
+    "priority": 200,
+    "maxJobsPerRun": 20,
+    "cooldownMinutes": 1,
+    "autoApplyEnabled": false,
+    "_disabled_reason": "Planned scraper; not implemented yet"
+  },
+  "remoteyeah": {
+    "enabled": false,
+    "priority": 210,
+    "maxJobsPerRun": 20,
+    "cooldownMinutes": 1,
+    "autoApplyEnabled": false,
+    "_disabled_reason": "Apply flow opens new tab to login page (remoteyeah.com/login?redirect_url=...) — site requires authenticated session to apply"
+  },
+  "remotejobsorg": {
+    "enabled": false,
+    "priority": 220,
+    "maxJobsPerRun": 50,
+    "cooldownMinutes": 1,
+    "autoApplyEnabled": false
+  },
+  "jobdataapi": {
+    "enabled": false,
+    "priority": 230,
+    "maxJobsPerRun": 20,
+    "cooldownMinutes": 1,
+    "autoApplyEnabled": true
+  },
+  "realworkfromanywhere": {
+    "enabled": false,
+    "priority": 235,
+    "maxJobsPerRun": 40,
+    "cooldownMinutes": 1,
+    "autoApplyEnabled": true,
+    "maxAgeDays": 14,
+    "remoteOnly": true,
+    "feeds": [
+      "https://www.realworkfromanywhere.com/rss.xml",
+      "https://www.realworkfromanywhere.com/remote-customer-support-jobs/rss.xml"
+    ]
+  },
+  "ashby": {
+    "enabled": false,
+    "priority": 26,
+    "maxJobsPerRun": 25,
+    "cooldownMinutes": 30,
+    "autoApplyEnabled": true
+  },
+  "bamboohr": {
+    "enabled": false,
+    "priority": 28,
+    "maxJobsPerRun": 25,
+    "cooldownMinutes": 30,
+    "autoApplyEnabled": true
+  },
+  "lever": {
+    "enabled": false,
+    "priority": 29,
+    "maxJobsPerRun": 25,
+    "cooldownMinutes": 30,
+    "autoApplyEnabled": true
+  },
+  "breezyhr": {
+    "enabled": false,
+    "priority": 31,
+    "maxJobsPerRun": 25,
+    "cooldownMinutes": 30,
+    "autoApplyEnabled": true,
+    "maxAgeDays": 14,
+    "remoteOnly": true
+  },
+  "smartrecruiters": {
+    "enabled": false,
+    "priority": 32,
+    "maxJobsPerRun": 25,
+    "cooldownMinutes": 30,
+    "autoApplyEnabled": true,
+    "maxAgeDays": 14,
+    "remoteOnly": true
+  },
+  "workable": {
+    "enabled": false,
+    "priority": 33,
+    "maxJobsPerRun": 25,
+    "cooldownMinutes": 30,
+    "autoApplyEnabled": true,
+    "maxAgeDays": 14,
+    "remoteOnly": true
+  }
+}

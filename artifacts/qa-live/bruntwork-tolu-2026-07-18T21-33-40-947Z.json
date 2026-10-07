@@ -1,0 +1,86 @@
+{
+  "generatedAt": "2026-07-18T21:33:40.945Z",
+  "profile": "tolu",
+  "limit": 3,
+  "aiProviderAvailable": true,
+  "scraped": 3,
+  "counts": {
+    "ignore": 3
+  },
+  "ignoredByProfileQa": 2,
+  "wouldAdvance": [],
+  "rows": [
+    {
+      "title": "Dental Insurance Verification Specialist",
+      "url": "https://bruntworkcareers.co/jobs/58879204156",
+      "score": 5,
+      "recommendation": "ignore",
+      "reasons": [
+        "The role is a Dental Insurance Verification Specialist, which is a completely different profession from the candidate's web development and SEO background.",
+        "The candidate has no experience with dental insurance, Dentrix, or HIPAA, which are core requirements.",
+        "The job requires 3-5 years of dental insurance verification experience, while the candidate has 2 years of web development experience."
+      ],
+      "matchedSkills": [
+        "Attention to detail",
+        "Ability to work independently"
+      ],
+      "missingSkills": [
+        "Dental insurance verification",
+        "Dentrix",
+        "Dental terminology",
+        "HIPAA",
+        "U.S. insurance provider communication"
+      ]
+    },
+    {
+      "title": "Business Development Specialist",
+      "url": "https://bruntworkcareers.co/jobs/58869637959",
+      "score": 0,
+      "recommendation": "ignore",
+      "reasons": [
+        "Profile role QA: Tolu should not advance sales/support-heavy roles unless the title is clearly web, SEO, Shopify, WordPress, or developer-focused."
+      ],
+      "matchedSkills": [],
+      "missingSkills": [
+        "SEO",
+        "Technical SEO",
+        "Shopify",
+        "WordPress",
+        "Web Development",
+        "JavaScript",
+        "Node.js",
+        "Content Systems",
+        "YouTube Automation",
+        "Digital Marketing",
+        "HTML",
+        "CSS",
+        "E-Commerce"
+      ]
+    },
+    {
+      "title": "Client Fulfillment Representative (GoHighLevel)",
+      "url": "https://bruntworkcareers.co/jobs/58869495136",
+      "score": 0,
+      "recommendation": "ignore",
+      "reasons": [
+        "Profile role QA: Tolu is limited to web, SEO, Shopify, WordPress, JavaScript, or technical website roles; generic admin/support title has no technical website evidence."
+      ],
+      "matchedSkills": [],
+      "missingSkills": [
+        "SEO",
+        "Technical SEO",
+        "Shopify",
+        "WordPress",
+        "Web Development",
+        "JavaScript",
+        "Node.js",
+        "Content Systems",
+        "YouTube Automation",
+        "Digital Marketing",
+        "HTML",
+        "CSS",
+        "E-Commerce"
+      ]
+    }
+  ]
+}

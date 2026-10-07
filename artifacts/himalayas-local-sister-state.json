@@ -1,0 +1,13 @@
+{
+  "sites": {
+    "himalayas": {
+      "lastStartedAt": "2026-08-15T18:19:57.933Z",
+      "lastRunAt": "2026-08-15T18:20:09.559Z",
+      "lastStatus": "ok",
+      "lastJobCount": 10,
+      "lastSeenJobUrl": "https://himalayas.app/companies/ltvplus/jobs/part-time-customer-service-agent-for-a-consumer-goods-e-commerce-company-talent",
+      "lastError": "",
+      "lastSuccessAt": "2026-08-15T18:20:09.559Z"
+    }
+  }
+}

@@ -1,0 +1,46 @@
+{
+  "family": "jobpilot-runner",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": [
+    "FARGATE"
+  ],
+  "cpu": "1024",
+  "memory": "2048",
+  "executionRoleArn": "arn:aws:iam::<ACCOUNT_ID>:role/ecsTaskExecutionRole",
+  "taskRoleArn": "arn:aws:iam::<ACCOUNT_ID>:role/ecsTaskRole",
+  "containerDefinitions": [
+    {
+      "name": "jobpilot-scraper",
+      "image": "<ACCOUNT_ID>.dkr.ecr.<AWS_REGION>.amazonaws.com/jobpilot-runner:latest",
+      "essential": true,
+      "command": [
+        "./scripts/aws-entrypoint.sh",
+        "node",
+        "scripts/aws-worker.mjs"
+      ],
+      "environment": [
+        { "name": "NODE_ENV", "value": "production" },
+        { "name": "HEADLESS", "value": "true" },
+        { "name": "PROFILES", "value": "tolu,sister" },
+        { "name": "AI_PROVIDER", "value": "deepseek" },
+        { "name": "AI_MODE", "value": "REAL" },
+        { "name": "AUTO_APPLY", "value": "false" },
+        { "name": "TEST_MODE", "value": "false" },
+        { "name": "NO_REAL_SUBMISSION", "value": "false" },
+        { "name": "JOBPILOT_CLOUD_RUNTIME", "value": "aws" },
+        { "name": "WORKER_RESTART_DELAY_MS", "value": "900000" },
+        { "name": "TOLU_ENABLED_SITES", "value": "bruntwork,jobberman,myjobmag,jobicy" },
+        { "name": "SISTER_ENABLED_SITES", "value": "bruntwork,jobberman,myjobmag,jobicy" },
+        { "name": "DEEPSEEK_BASE_URL", "value": "https://router.kiosapi.com/v1" }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/jobpilot-runner",
+          "awslogs-region": "<AWS_REGION>",
+          "awslogs-stream-prefix": "jobpilot"
+        }
+      }
+    }
+  ]
+}

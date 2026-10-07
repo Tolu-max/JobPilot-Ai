@@ -1,0 +1,212 @@
+import 'dotenv/config';
+import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
+
+if (process.platform === 'win32') {
+  const _req = createRequire(import.meta.url);
+  const cp = _req('child_process');
+  const _origSpawn = cp.spawn;
+  cp.spawn = function (cmd, args, opts) {
+    return _origSpawn.call(this, cmd, Array.isArray(args) ? args : [], { windowsHide: true, ...(opts || {}) });
+  };
+  const _origExec = cp.exec;
+  cp.exec = function (cmd, opts, cb) {
+    if (typeof opts === 'function') { cb = opts; opts = {}; }
+    return _origExec.call(this, cmd, { windowsHide: true, ...(opts || {}) }, cb);
+  };
+  const _origExecFile = cp.execFile;
+  cp.execFile = function (file, args, opts, cb) {
+    if (typeof args === 'function') { cb = args; args = []; opts = {}; }
+    else if (typeof opts === 'function') { cb = opts; opts = {}; }
+    return _origExecFile.call(this, file, args, { windowsHide: true, ...(opts || {}) }, cb);
+  };
+}
+
+import { buildConfig } from './config.js';
+import { appendLog } from './logger.js';
+import { runJobHunt } from './pipeline.js';
+import { sendNotification } from './notifications.js';
+import { startTelegramPolling, sendDailySummary } from './telegramBot.js';
+import { startDashboardServer } from './dashboardServer.js';
+import { pruneAiCache } from './aiRouter.js';
+import { checkEmailResponses } from './responseTracker.js';
+import { bootstrapProfilesFromEnv } from './profileBundleBootstrap.js';
+
+import fs from 'node:fs';
+import path from 'node:path';
+
+let running = false;
+let activeConfigs = [];
+
+export async function startScheduler(argv = process.argv) {
+  if (process.env.JOBPILOT_RESET_BRUNTWORK_ID) {
+    try {
+      await import('../scripts/ops/reset-bruntwork-jobs-once.mjs');
+    } catch (err) {
+      console.warn('[scheduler] Failed to run restage script: ' + err.message);
+    }
+  }
+
+  await bootstrapProfilesFromEnv();
+
+  const baseConfig = buildConfig(argv);
+  const profilesDir = path.join(baseConfig.rootDir, 'profiles');
+
+  const requestedProfiles = resolveProfileNamesArg(argv);
+  let profileNames = requestedProfiles.length ? requestedProfiles : [];
+  if (!requestedProfiles.length) {
+    try {
+      profileNames = fs.readdirSync(profilesDir).filter(p => !p.startsWith('.') && p !== 'example');
+    } catch (err) {
+      console.warn(`Could not read profiles dir: ${profilesDir}`);
+    }
+  }
+
+  if (!profileNames.length) {
+    console.warn(`No runnable profiles found in ${profilesDir}.`);
+    console.warn('On Railway, upload profiles to /app/data/profiles or set PROFILES=tolu,sister after uploading the folders.');
+    keepProcessAlive();
+    return;
+  }
+
+  activeConfigs = profileNames.map(name => buildConfig([...argv, `--profile=${name}`]));
+  const primaryConfig = activeConfigs[0];
+
+  await appendLog(`Scheduler started. Interval: ${primaryConfig.schedulerIntervalMs}ms`, primaryConfig);
+  if (primaryConfig.notifyOnSchedulerStart || process.env.NOTIFY_SCHEDULER_START === 'true') {
+    await sendNotification(`Job hunter scheduler started for ${profileNames.length} profile(s).`, primaryConfig);
+  }
+
+  // Prune stale AI cache entries at startup
+  await pruneAiCache(primaryConfig.aiCachePath, primaryConfig.aiCacheMaxAgeHours || 24);
+
+  // Start listening for Telegram button callbacks
+  startTelegramPolling(activeConfigs);
+
+  // The HTTP dashboard is a local/dev tool. The normal product path is the CLI
+  // scheduler plus optional hosted dashboard sync.
+  if (isLocalDashboardEnabled()) {
+    const dashPort = parseInt(process.env.DASHBOARD_PORT || '3000', 10);
+    startDashboardServer(activeConfigs, dashPort);
+  }
+
+  scheduleDailySummary(primaryConfig);
+
+  const runOnce = createSchedulerRunner(activeConfigs);
+
+  await runOnce();
+  if (shouldRunOnceAndExit()) {
+    await appendLog('Scheduler run-once mode complete; exiting.', primaryConfig);
+    return;
+  }
+  setInterval(runOnce, primaryConfig.schedulerIntervalMs);
+}
+
+function resolveProfileNamesArg(argv) {
+  const profilesInline = argv.find((arg) => arg.startsWith('--profiles='));
+  if (profilesInline) return splitProfileNames(profilesInline.split('=').slice(1).join('='));
+
+  const profilesIndex = argv.findIndex((arg) => arg === '--profiles');
+  if (profilesIndex >= 0 && argv[profilesIndex + 1]) return splitProfileNames(argv[profilesIndex + 1]);
+
+  const inline = argv.find((arg) => arg.startsWith('--profile='));
+  if (inline) return splitProfileNames(inline.split('=').slice(1).join('='));
+
+  const index = argv.findIndex((arg) => arg === '--profile');
+  if (index >= 0 && argv[index + 1]) return splitProfileNames(argv[index + 1]);
+
+  return splitProfileNames(process.env.PROFILES || process.env.PROFILE || '');
+}
+
+function splitProfileNames(value) {
+  return String(value || '')
+    .split(/[,\s]+/)
+    .map((name) => name.trim().toLowerCase().replace(/[^a-z0-9_-]+/g, ''))
+    .filter(Boolean);
+}
+
+function keepProcessAlive() {
+  setInterval(() => {}, 60 * 60 * 1000);
+}
+
+export function createSchedulerRunner(configs, runFn = runJobHunt) {
+  return async function runOnce() {
+    if (running) {
+      await appendLog('Scheduler skipped tick because previous run is still active.', configs[0]);
+      return { skipped: true };
+    }
+
+    running = true;
+    try {
+      for (const config of configs) {
+        await appendLog(`--- Processing profile: ${config.profileName} ---`, config);
+        const reprocessNonApplied = process.env.REPROCESS_NON_APPLIED === 'true' || config.reprocessNonApplied === true;
+        await runFn(config, { reprocessNonApplied });
+        
+        // Also check emails after pipeline finishes
+        await checkEmailResponses(config).catch(err => {
+          appendLog(`ResponseTracker error in scheduler: ${err.message}`, config);
+        });
+
+        if (typeof global.gc === 'function') {
+          try { global.gc(); } catch {}
+        }
+      }
+
+      return { skipped: false };
+    } catch (error) {
+      await appendLog(`Scheduler run failed: ${error.stack || error.message}`, configs[0]);
+      await sendNotification(`Job hunter run failed: ${error.message}`, configs[0]);
+      throw error;
+    } finally {
+      running = false;
+    }
+  };
+}
+
+/**
+ * Schedule a daily Telegram summary at 8 AM local time.
+ * Fires once per day — uses a simple interval check every minute.
+ */
+function scheduleDailySummary(config) {
+  let lastSummaryDate = null;
+
+  setInterval(async () => {
+    const now = new Date();
+    const dateKey = now.toDateString();
+    if (now.getHours() === 8 && lastSummaryDate !== dateKey) {
+      lastSummaryDate = dateKey;
+      await sendDailySummary(config).catch((err) => {
+        console.error('[Scheduler] Daily summary failed:', err.message);
+      });
+    }
+  }, 60 * 1000); // check every minute
+}
+
+function isLocalDashboardEnabled() {
+  return ['1', 'true', 'yes', 'on'].includes(String(process.env.JOBPILOT_LOCAL_DASHBOARD || '').toLowerCase());
+}
+
+function shouldRunOnceAndExit() {
+  return ['1', 'true', 'yes', 'on'].includes(String(process.env.RUN_ONCE_AND_EXIT || process.env.SCHEDULER_RUN_ONCE || '').toLowerCase());
+}
+
+process.on('uncaughtException', async (error) => {
+  await appendLog(`Uncaught exception: ${error.stack || error.message}`, activeConfigs[0]);
+  await sendNotification(`Scheduler crashed: ${error.message}`, activeConfigs[0]).catch(() => {});
+  setTimeout(() => process.exit(1), 1000).unref();
+});
+
+process.on('unhandledRejection', async (reason) => {
+  const message = reason?.stack || reason;
+  await appendLog(`Unhandled rejection: ${message}`, activeConfigs[0]);
+  await sendNotification(`Scheduler rejected: ${reason?.message || reason}`, activeConfigs[0]).catch(() => {});
+});
+
+if (process.argv[1] && (
+  process.argv[1].endsWith('scheduler.js') || 
+  process.argv[1].endsWith('scheduler') ||
+  process.env.PM2_HOME
+)) {
+  startScheduler();
+}

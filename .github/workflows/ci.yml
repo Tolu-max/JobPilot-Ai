@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check scrapers
+        run: npm run scrapers:check
+
+      - name: Run tests
+        run: npm test
+
+      - name: Website install
+        working-directory: website
+        run: npm ci
+
+      - name: Website lint
+        working-directory: website
+        run: npm run lint
+
+      - name: Website build
+        working-directory: website
+        run: npm run build

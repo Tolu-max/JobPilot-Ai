@@ -1,0 +1,87 @@
+{
+  "displayName": "Example User",
+  "applicantEmail": "you@example.com",
+  "resumePath": "resume.pdf",
+  "resumePlaceholder": true,
+  "careerBrainPrompt": "",
+  "enabledSites": [
+    "remoteok",
+    "remotive",
+    "remotejobsorg"
+  ],
+  "sitePriority": [
+    "remoteok",
+    "remotive",
+    "remotejobsorg"
+  ],
+  "siteLimits": {
+    "remoteok": 10,
+    "remotive": 10,
+    "remotejobsorg": 10
+  },
+  "sites": {
+    "remoteok": {
+      "enabled": true,
+      "maxJobsPerRun": 10,
+      "cooldownMinutes": 60,
+      "autoApplyEnabled": false,
+      "remoteOnly": true,
+      "maxAgeDays": 14
+    },
+    "remotive": {
+      "enabled": true,
+      "maxJobsPerRun": 10,
+      "cooldownMinutes": 60,
+      "autoApplyEnabled": false,
+      "remoteOnly": true,
+      "maxAgeDays": 14
+    },
+    "remotejobsorg": {
+      "enabled": true,
+      "maxJobsPerRun": 10,
+      "cooldownMinutes": 60,
+      "autoApplyEnabled": false,
+      "remoteOnly": true,
+      "maxAgeDays": 14
+    }
+  },
+  "allowDuplicateJobs": false,
+  "remotePreference": "prefer_remote",
+  "targetSeniorities": [
+    "entry",
+    "junior",
+    "mid"
+  ],
+  "hardFilters": [
+    "u.s. work authorization",
+    "authorized to work in the united states",
+    "security clearance required"
+  ],
+  "exclusions": [
+    "commission only",
+    "door to door"
+  ],
+  "titleExclusions": [],
+  "autoApply": false,
+  "testMode": true,
+  "noRealSubmission": true,
+  "allowGatewayAutoSubmit": false,
+  "maxAutoApplyPerRun": 1,
+  "maxJobsPerRun": 20,
+  "minLocalScoreForAi": 60,
+  "schedulerIntervalMs": 14400000,
+  "aiCacheMaxAgeHours": 48,
+  "minDelayMs": 2000,
+  "maxDelayMs": 6000,
+  "userProfileSummary": "Remote-friendly candidate looking for roles that match their CV and preferences.",
+  "voiceRecordingUrl": "",
+  "applicationDefaults": {
+    "fullName": "Example User",
+    "phone": "+1 555 0123",
+    "city": "Your City",
+    "country": "Your Country",
+    "contractPreference": "I will only accept long term offers",
+    "weekendAvailability": "Yes",
+    "referralSource": "Found via job board"
+  }
+}

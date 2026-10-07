@@ -1,0 +1,52 @@
+{
+  "name": "Example User",
+  "portfolioLinks": [],
+  "skills": [
+    "customer support",
+    "email management",
+    "data entry",
+    "scheduling",
+    "CRM tools"
+  ],
+  "strengths": [
+    "clear written communication",
+    "attention to detail",
+    "self-directed remote work"
+  ],
+  "weaknesses": [],
+  "preferredRoles": [
+    "Customer Support Representative",
+    "Virtual Assistant",
+    "Administrative Assistant"
+  ],
+  "secondaryRoles": [
+    "Data Entry Specialist",
+    "Office Coordinator"
+  ],
+  "experienceKeywords": [
+    "remote work",
+    "shopify",
+    "zendesk",
+    "google workspace",
+    "ms office"
+  ],
+  "remotePreference": "prefer_remote",
+  "targetSeniorities": [
+    "entry",
+    "junior",
+    "mid"
+  ],
+  "rejectedJobs": [],
+  "successfulMatches": [],
+  "hardFilters": [
+    "u.s. work authorization",
+    "security clearance required"
+  ],
+  "exclusions": [
+    "commission only",
+    "door to door"
+  ],
+  "sourceResume": "resume.pdf",
+  "resumeTextPreview": "Replace this with the first few hundred chars of your resume so the matcher has signal.",
+  "lastUpdated": "1970-01-01T00:00:00.000Z"
+}

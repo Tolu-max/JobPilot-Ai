@@ -1,0 +1,13 @@
+{
+  "sites": {
+    "himalayas": {
+      "lastStartedAt": "2026-08-15T18:18:40.404Z",
+      "lastRunAt": "2026-08-15T18:18:49.619Z",
+      "lastStatus": "ok",
+      "lastJobCount": 20,
+      "lastSeenJobUrl": "https://himalayas.app/companies/groupe-lg2/jobs/specialiste-assurance-qualite-pigiste",
+      "lastError": "",
+      "lastSuccessAt": "2026-08-15T18:18:49.619Z"
+    }
+  }
+}

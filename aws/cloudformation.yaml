@@ -1,0 +1,133 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'JobPilot Automated Scraper - ECS Fargate Infrastructure on AWS'
+
+Parameters:
+  EnvironmentName:
+    Type: String
+    Default: production
+    Description: Environment name prefix
+
+  Profiles:
+    Type: String
+    Default: 'tolu,sister'
+    Description: Comma-separated profile list to run
+
+  ProfileBundleUrl:
+    Type: String
+    Default: ''
+    Description: Optional URL to pre-bundled profiles (tar.gz or zip)
+
+  AiApiKey:
+    Type: String
+    NoEcho: true
+    Default: ''
+    Description: AI Provider API key (DeepSeek / Gemini / OpenRouter)
+
+Resources:
+  # ECR Repository
+  JobPilotEcrRepo:
+    Type: AWS::ECR::Repository
+    Properties:
+      RepositoryName: jobpilot-runner
+      ImageScanningConfiguration:
+        ScanOnPush: true
+
+  # CloudWatch Log Group
+  JobPilotLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: /ecs/jobpilot-runner
+      RetentionInDays: 14
+
+  # ECS Cluster
+  JobPilotCluster:
+    Type: AWS::ECS::Cluster
+    Properties:
+      ClusterName: !Sub 'jobpilot-cluster-${EnvironmentName}'
+
+  # IAM Execution Role
+  EcsTaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub 'jobpilot-task-execution-role-${EnvironmentName}'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+
+  # IAM Task Role
+  EcsTaskRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub 'jobpilot-task-role-${EnvironmentName}'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ecs-tasks.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: S3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:ListBucket
+                Resource: '*'
+
+  # ECS Task Definition
+  JobPilotTaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: jobpilot-runner
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      Cpu: '1024'
+      Memory: '2048'
+      ExecutionRoleArn: !GetAtt EcsTaskExecutionRole.Arn
+      TaskRoleArn: !GetAtt EcsTaskRole.Arn
+      ContainerDefinitions:
+        - Name: jobpilot-scraper
+          Image: !Sub '${AWS::AccountId}.dkr.ecr.${AWS::Region}.amazonaws.com/${JobPilotEcrRepo}:latest'
+          Essential: true
+          Command:
+            - './scripts/aws-entrypoint.sh'
+            - 'node'
+            - 'scripts/aws-worker.mjs'
+          Environment:
+            - Name: NODE_ENV
+              Value: production
+            - Name: HEADLESS
+              Value: 'true'
+            - Name: PROFILES
+              Value: !Ref Profiles
+            - Name: PROFILE_BUNDLE_URL
+              Value: !Ref ProfileBundleUrl
+            - Name: JOBPILOT_CLOUD_RUNTIME
+              Value: aws
+            - Name: WORKER_RESTART_DELAY_MS
+              Value: '900000'
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref JobPilotLogGroup
+              awslogs-region: !Ref 'AWS::Region'
+              awslogs-stream-prefix: jobpilot
+
+Outputs:
+  EcrRepositoryUri:
+    Description: ECR Repository URI
+    Value: !GetAtt JobPilotEcrRepo.RepositoryUri
+  EcsClusterName:
+    Description: ECS Cluster Name
+    Value: !Ref JobPilotCluster

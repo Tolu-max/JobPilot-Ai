@@ -1,0 +1,28 @@
+version: 1.0
+runtime: custom
+build:
+  commands:
+    build:
+      - echo "Docker-based container build configured via ECR"
+run:
+  command: ./scripts/aws-entrypoint.sh node scripts/aws-worker.mjs
+  network:
+    port: 3000
+    env: APP_PORT
+  env:
+    - name: NODE_ENV
+      value: production
+    - name: HEADLESS
+      value: "true"
+    - name: PROFILES
+      value: "tolu,sister"
+    - name: JOBPILOT_CLOUD_RUNTIME
+      value: aws
+    - name: WORKER_RESTART_DELAY_MS
+      value: "900000"
+    - name: TOLU_ENABLED_SITES
+      value: "bruntwork,jobberman,myjobmag,jobicy"
+    - name: SISTER_ENABLED_SITES
+      value: "bruntwork,jobberman,myjobmag,jobicy"
+    - name: DEEPSEEK_BASE_URL
+      value: "https://router.kiosapi.com/v1"
