@@ -1,16 +1,5 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import Database from 'better-sqlite3';
-
-const rootDirs = ['/app/data', './data', '.'];
-let dbPath = null;
-for (const dir of rootDirs) {
-  const p = path.join(dir, 'job-applications.db');
-  if (fs.existsSync(p)) {
-    dbPath = p;
-    break;
-  }
-}
 
 const profilesDirs = ['/app/data/profiles', './profiles'];
 let profilesDir = null;
@@ -21,7 +10,7 @@ for (const dir of profilesDirs) {
   }
 }
 
-console.log('[restage-accepted-jobs] Running restage for accepted Telegram jobs...');
+console.log('[restage-accepted-jobs] Running safe restage for valid pending Telegram jobs...');
 
 if (profilesDir) {
   const profiles = fs.readdirSync(profilesDir).filter(p => !p.startsWith('.') && p !== 'example');
@@ -37,23 +26,21 @@ if (profilesDir) {
 
       for (const j of jobsList) {
         if (j.acceptedViaTelegram === true && j.status !== 'applied' && j.status !== 'hired') {
-          console.log(`[restage] Restaging accepted job for ${prof}: "${j.title}" (previous status: ${j.status}, reason: ${j.reason || 'none'})`);
+          // Never restage jobs that failed deterministically or reached max retries
+          const isIndeed = String(j.source_site || j.source || '').toLowerCase() === 'indeed' ||
+            /(?:[a-z]{2}\.)?indeed\.com/i.test(j.applicationUrl || j.job_url || '');
+          const isDeterministic = /same-indeed-page|no external ATS|closed|unavailable/i.test(j.reason || '');
+          const isTerminal = j.terminal === true || (j.retryCount || 0) >= 3;
+
+          if (isIndeed || isDeterministic || isTerminal) {
+            continue;
+          }
+
+          console.log(`[restage] Restaging accepted job for ${prof}: "${j.title}" (previous status: ${j.status})`);
           j.status = 'pending_apply';
           j.terminal = false;
           j.retryCount = 0;
           delete j.reason;
-
-          if (/(?:[a-z]{2}\.)?indeed\.com/i.test(j.applicationUrl || '') || String(j.source_site || j.source || '').toLowerCase() === 'indeed') {
-            const jkMatch = (j.applicationUrl || '').match(/jk=([a-f0-9]{16})/i) || (j.sourceJobId || '').match(/([a-f0-9]{16})/i);
-            const jk = jkMatch ? jkMatch[1] : '';
-            if (jk) {
-              const slug = String(j.title || '')
-                .toLowerCase()
-                .replace(/[^a-z0-9]+/g, '-')
-                .replace(/^-|-$/g, '');
-              j.applicationUrl = slug ? `https://www.indeed.com/job/${slug}-${jk}` : `https://www.indeed.com/viewjob?jk=${jk}`;
-            }
-          }
           restagedCount++;
         }
       }
@@ -68,20 +55,4 @@ if (profilesDir) {
   }
 }
 
-if (dbPath) {
-  try {
-    const db = new Database(dbPath);
-    const info = db.prepare(`
-      UPDATE job_applications 
-      SET status = 'pending_apply' 
-      WHERE status IN ('manual_review', 'failed', 'ignored', 'reviewed')
-        AND (source_site = 'indeed' OR job_url LIKE '%indeed%')
-        AND status NOT IN ('applied', 'hired')
-    `).run();
-    console.log(`[restage] Updated ${info.changes} Indeed row(s) in SQLite database`);
-  } catch (err) {
-    console.warn(`[restage] Database update failed: ${err.message}`);
-  }
-}
-
-console.log('[restage-accepted-jobs] Restage completed.');
+console.log('[restage-accepted-jobs] Safe restage completed.');

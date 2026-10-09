@@ -18,18 +18,26 @@ export function hashJob(job) {
 }
 
 function findMatchingRecordIndex(jobs = [], job, jobHash) {
+  const targetHash = job?.job_hash || jobHash;
   const targetUrl = normalizeUrl(job?.applicationUrl || job?.job_url || job?.url || '');
   const targetTitle = String(job?.title || '').trim().toLowerCase();
   const targetCompany = String(job?.company || '').trim().toLowerCase();
+  const targetJobId = String(job?.sourceJobId || '').trim();
+
   return jobs.findIndex((record) => {
-    if (record.job_hash && record.job_hash === jobHash) return true;
-    if (record.job_url === job.applicationUrl) return true;
+    if (record.job_hash && (record.job_hash === targetHash || record.job_hash === jobHash)) return true;
+    if (targetJobId && record.sourceJobId && record.sourceJobId === targetJobId) return true;
+    if (record.job_url && (record.job_url === job?.applicationUrl || record.job_url === job?.job_url)) return true;
+    if (record.applicationUrl && (record.applicationUrl === job?.applicationUrl || record.applicationUrl === job?.job_url)) return true;
     if (targetUrl) {
       const recUrl = normalizeUrl(record.job_url || record.applicationUrl || record.url || '');
       if (recUrl && recUrl === targetUrl) return true;
     }
-    if (targetTitle && targetCompany && record.title && record.company) {
-      if (record.title.trim().toLowerCase() === targetTitle && record.company.trim().toLowerCase() === targetCompany) {
+    if (targetTitle && record.title && record.title.trim().toLowerCase() === targetTitle) {
+      if (!targetCompany || !record.company || targetCompany === 'not listed' || record.company.toLowerCase() === 'not listed') {
+        return true;
+      }
+      if (record.company.trim().toLowerCase() === targetCompany) {
         return true;
       }
     }
@@ -131,7 +139,7 @@ export async function upsertJobRecord(config, job, status, details = {}) {
   try {
     release = await lockfile.lock(config.jobStorePath, { retries: 5, stale: 10000 });
     const store = await loadJobStore(config);
-    const jobHash = hashJob(job);
+    const jobHash = job.job_hash || details.job_hash || hashJob(job);
     const existingIndex = findMatchingRecordIndex(store.jobs, job, jobHash);
     const resolvedUrl = job.applicationUrl || job.job_url || details.applicationUrl || details.job_url || '';
     const record = {
@@ -157,7 +165,12 @@ export async function upsertJobRecord(config, job, status, details = {}) {
         : retryStates.includes(prev.status) && retryStates.includes(status)
           ? (prev.retryCount || 0) + 1
           : (prev.retryCount || 0);
-      store.jobs[existingIndex] = { ...prev, ...record, retryCount };
+      store.jobs[existingIndex] = {
+        ...prev,
+        ...record,
+        job_hash: prev.job_hash || record.job_hash || jobHash,
+        retryCount
+      };
     } else {
       const requestedRetryCount = Number.parseInt(details.retryCount, 10);
       const retryCount = Number.isFinite(requestedRetryCount) && requestedRetryCount >= 0
@@ -185,12 +198,13 @@ export async function upsertGlobalJobRecord(config, job, status, details = {}) {
   try {
     release = await lockfile.lock(config.globalJobStorePath, { retries: 5, stale: 10000 });
     const store = await loadGlobalJobStore(config);
-    const jobHash = hashJob(job);
+    const jobHash = job.job_hash || details.job_hash || hashJob(job);
     const existingIndex = findMatchingRecordIndex(store.jobs, job, jobHash);
+    const resolvedUrl = job.applicationUrl || job.job_url || details.applicationUrl || details.job_url || '';
     const record = {
       job_hash: jobHash,
       source_site: job.source_site || job.source || 'unknown',
-      job_url: job.applicationUrl,
+      job_url: resolvedUrl,
       title: job.title,
       company: job.company || '',
       applied_by_profile: config.profileName || 'default',

@@ -111,7 +111,13 @@ if [ -f "./scripts/build-resume-library.mjs" ]; then
   node ./scripts/build-resume-library.mjs 2>&1 || true
 fi
 
-if [ -f "./scripts/restage-accepted-jobs.mjs" ]; then
+if [ -f "./scripts/clean-stuck-pending.mjs" ]; then
+  echo "[bootstrap] Running clean-stuck-pending to ensure clean apply queue..."
+  node ./scripts/clean-stuck-pending.mjs 2>&1 || true
+fi
+
+if [ "${RESTAGE_ACCEPTED_JOBS:-}" = "true" ] && [ -f "./scripts/restage-accepted-jobs.mjs" ]; then
+  echo "[bootstrap] RESTAGE_ACCEPTED_JOBS is true. Running restage script..."
   node ./scripts/restage-accepted-jobs.mjs 2>&1 || true
 fi
 

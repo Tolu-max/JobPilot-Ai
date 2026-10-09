@@ -738,7 +738,7 @@ export async function advance(page, step, ctx = {}) {
         step,
         advanced: false,
         reason: 'same-indeed-page: no external ATS redirect found',
-        meta: { deterministicFailure: true, manualReview: false }
+        meta: { deterministicFailure: true, manualReview: true }
       };
     }
 

@@ -69,3 +69,42 @@ test('resetProcessedJobs allNonApplied also removes skipped and duplicate record
   assert.equal(store.jobs[0].status, 'applied');
   assert.equal(store.resetHistory[0].mode, 'all-non-applied');
 });
+
+test('upsertJobRecord updates existing record in-place even if URL changes to slug', async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'job-store-'));
+  const config = { profileName: 'tolu', jobStorePath: path.join(dir, 'processedJobs.json') };
+
+  const initialJob = {
+    title: 'Software Developer I',
+    company: 'Barrios Technology',
+    source_site: 'indeed',
+    job_url: 'https://www.indeed.com/rc/clk?jk=7ec9984509c252eb',
+    applicationUrl: 'https://www.indeed.com/rc/clk?jk=7ec9984509c252eb'
+  };
+
+  const initialRecord = await upsertJobRecord(config, initialJob, 'pending_apply', {
+    score: 86,
+    acceptedViaTelegram: true
+  });
+
+  assert.equal(initialRecord.status, 'pending_apply');
+
+  // Modified job where applicationUrl changed to slug URL
+  const slugJob = {
+    ...initialRecord,
+    applicationUrl: 'https://www.indeed.com/job/software-developer-i-7ec9984509c252eb'
+  };
+
+  await upsertJobRecord(config, slugJob, 'manual_review', {
+    reason: 'same-indeed-page: no external ATS redirect found',
+    terminal: true,
+    retryCount: 3
+  });
+
+  const store = JSON.parse(await fs.readFile(config.jobStorePath, 'utf8'));
+  assert.equal(store.jobs.length, 1, 'Should NOT create an orphan duplicate');
+  assert.equal(store.jobs[0].status, 'manual_review');
+  assert.equal(store.jobs[0].terminal, true);
+  assert.equal(store.jobs[0].retryCount, 3);
+});
+
