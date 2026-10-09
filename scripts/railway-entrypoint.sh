@@ -116,6 +116,11 @@ if [ -f "./scripts/clean-stuck-pending.mjs" ]; then
   node ./scripts/clean-stuck-pending.mjs 2>&1 || true
 fi
 
+if [ -f "./scripts/ops/requeue-eligible-bruntwork.mjs" ]; then
+  echo "[bootstrap] Running requeue-eligible-bruntwork to promote 60+ BruntWork jobs..."
+  node ./scripts/ops/requeue-eligible-bruntwork.mjs 2>&1 || true
+fi
+
 if [ "${RESTAGE_ACCEPTED_JOBS:-}" = "true" ] && [ -f "./scripts/restage-accepted-jobs.mjs" ]; then
   echo "[bootstrap] RESTAGE_ACCEPTED_JOBS is true. Running restage script..."
   node ./scripts/restage-accepted-jobs.mjs 2>&1 || true

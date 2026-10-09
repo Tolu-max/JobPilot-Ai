@@ -44,6 +44,13 @@ The hosted web/dashboard must not collect or store by default:
 - Source boards that redirect to company pages should resolve gateways first, then hand off only to audited apply handlers.
 - CAPTCHA solving is optional, user-owned, and paid by the user. Prefer generic wording: "CAPTCHA solver" or "CapSolver"; do not call it a BruntWork solver.
 
+## Scoring & Review Threshold Policy
+
+- **BruntWork Thresholds**:
+  - Auto-apply score threshold is **60+** (roles scoring 60+ auto-apply directly).
+  - Review score range is **50–59** (roles scoring 50–59 are routed to Telegram review).
+  - Roles scoring below 50 are ignored.
+
 ## Current Architecture
 
 - CLI/local runner owns sensitive automation.

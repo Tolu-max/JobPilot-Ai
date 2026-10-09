@@ -332,14 +332,17 @@ export function getAutoApplyGate(config = {}, job = {}, local = {}, optimizer = 
 
   if (local?.score !== undefined || optimizer?.application_score !== undefined || job.score !== undefined) {
     const score = optimizer?.application_score ?? local?.score ?? job.score ?? 0;
-    const threshold = Number.isFinite(config.autoApplyScoreThreshold) ? config.autoApplyScoreThreshold : 85;
+    const isBruntwork = source === 'bruntwork';
+    const threshold = isBruntwork
+      ? Math.min(Number.isFinite(config.autoApplyScoreThreshold) ? config.autoApplyScoreThreshold : 60, 60)
+      : (Number.isFinite(config.autoApplyScoreThreshold) ? config.autoApplyScoreThreshold : 85);
 
     if (decision !== 'apply' || score < threshold) {
       return { enabled: false, reason: `Score ${score} below auto-apply threshold ${threshold}; requires human review.` };
     }
 
     const tier = local?.cluster?.tier;
-    if (tier === 'SELECTIVE_FIT' && score < 85) {
+    if (tier === 'SELECTIVE_FIT' && score < 85 && !isBruntwork) {
       return { enabled: false, reason: 'Selective fit requires 85+ score or human review.' };
     }
   }
@@ -598,14 +601,17 @@ export async function runJobHunt(config, options = {}) {
     const effectiveScore = optimizer.application_score ?? local.score ?? 0;
     const isHardExcluded = local?.cluster?.tier === 'HARD_EXCLUSION' ||
       (optimizer.risk_flags || []).some((f) => f.severity === 'high');
-    const isProvenWinner = local?.cluster?.tier === 'PROVEN_WINNER' ||
+    const isBruntwork = String(job.source_site || job.source || '').toLowerCase() === 'bruntwork';
+    const effectiveThreshold = isBruntwork ? Math.min(autoApplyThreshold, 60) : autoApplyThreshold;
+    const isProvenWinner = isBruntwork ||
+      local?.cluster?.tier === 'PROVEN_WINNER' ||
       local?.recommendation === 'auto_apply' ||
       (local?.cluster?.tier === 'SELECTIVE_FIT' && effectiveScore >= 85);
 
     let decision = 'ignore';
     if (isHardExcluded) {
       decision = 'ignore';
-    } else if (effectiveScore >= autoApplyThreshold && isProvenWinner) {
+    } else if (effectiveScore >= effectiveThreshold && isProvenWinner) {
       decision = 'apply';
     } else if (effectiveScore >= (config.minReviewScore || 50)) {
       decision = 'review';
