@@ -886,7 +886,7 @@ export async function advance(page, step, ctx = {}) {
     // 2. We are on smartapply.indeed.com or in the application modal
     // Check if submit button is visible
     const submitBtn = page.locator(
-      'button:has-text("Submit your application"), button:has-text("Submit application"), button:has-text("Submit"), button:has-text("Send application")'
+      '[data-testid*="submit" i], button:has-text("Submit your application"), button:has-text("Submit application"), button:has-text("Submit"), button:has-text("Send application")'
     ).first();
 
     const submitVisible = await submitBtn.isVisible().catch(() => false);
@@ -906,7 +906,7 @@ export async function advance(page, step, ctx = {}) {
 
     // Check if Continue / Next / Review button is visible
     const continueBtn = page.locator(
-      'button:has-text("Continue"), button:has-text("Next"), button:has-text("Review your application"), input[value="Continue"]'
+      '[data-testid="continue-button"], button:has-text("Continue"), button:has-text("Next"), button:has-text("Review your application"), input[value="Continue"]'
     ).first();
 
     const continueVisible = await continueBtn.isVisible().catch(() => false);

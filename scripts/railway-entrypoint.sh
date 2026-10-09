@@ -39,6 +39,10 @@ link_volume_dir() {
           done
         fi
       done
+      if [ -n "${TOLU_INDEED_COOKIES_BASE64:-}" ]; then
+        echo "[bootstrap] Syncing fresh TOLU_INDEED_COOKIES_BASE64 to /app/data/profiles/tolu/indeed_cookies.json"
+        echo "$TOLU_INDEED_COOKIES_BASE64" | base64 -d > /app/data/profiles/tolu/indeed_cookies.json 2>/dev/null || true
+      fi
     fi
   fi
 
