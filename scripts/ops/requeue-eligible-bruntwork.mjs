@@ -52,20 +52,29 @@ if (profilesDir) {
         const isBruntwork = source === 'bruntwork' || /bruntwork/i.test(url);
         const score = Number(j.score ?? j.local?.score ?? 0);
 
-        if (isBruntwork && score >= 60 && j.status !== 'applied' && j.status !== 'hired') {
+        if (isBruntwork && j.status !== 'applied' && j.status !== 'hired') {
           const title = String(j.title || '').toLowerCase();
           const isExcluded = exclusions.some(ex => title.includes(ex));
           if (isExcluded) continue;
 
-          console.log(`[requeue-bruntwork] Queuing BruntWork role for ${prof}: "${j.title}" (score: ${score}, previous status: ${j.status})`);
-          j.status = 'pending_apply';
-          j.acceptedViaTelegram = true;
-          j.decision = 'apply';
-          j.terminal = false;
-          j.retryCount = 0;
-          delete j.reason;
-          changed = true;
-          promotedTotal++;
+          if (score >= 60) {
+            console.log(`[requeue-bruntwork] Queuing BruntWork role for ${prof}: "${j.title}" (score: ${score}, previous status: ${j.status})`);
+            j.status = 'pending_apply';
+            j.acceptedViaTelegram = true;
+            j.decision = 'apply';
+            j.terminal = false;
+            j.retryCount = 0;
+            delete j.reason;
+            changed = true;
+            promotedTotal++;
+          } else if (score >= 50 && j.status === 'ignored') {
+            console.log(`[requeue-bruntwork] Routing BruntWork review role for ${prof}: "${j.title}" (score: ${score})`);
+            j.status = 'reviewed';
+            j.decision = 'review';
+            j.terminal = false;
+            delete j.reason;
+            changed = true;
+          }
 
           if (!j.applicationUrl && j.job_url) {
             j.applicationUrl = j.job_url;
@@ -76,6 +85,19 @@ if (profilesDir) {
       if (changed) {
         fs.writeFileSync(storePath, JSON.stringify(data, null, 2), 'utf8');
         console.log(`[requeue-bruntwork] Saved updated jobs to ${storePath}`);
+      }
+
+      // Reset stale BruntWork lastSeenJobUrl cursor to force a fresh scan of active jobs
+      const statePath = path.join(profilesDir, prof, 'siteRunState.json');
+      if (fs.existsSync(statePath)) {
+        try {
+          const stateData = JSON.parse(fs.readFileSync(statePath, 'utf8'));
+          if (stateData?.sites?.bruntwork?.lastSeenJobUrl) {
+            delete stateData.sites.bruntwork.lastSeenJobUrl;
+            fs.writeFileSync(statePath, JSON.stringify(stateData, null, 2), 'utf8');
+            console.log(`[requeue-bruntwork] Cleared stale bruntwork cursor for ${prof}`);
+          }
+        } catch {}
       }
     } catch (err) {
       console.warn(`[requeue-bruntwork] Error processing ${storePath}: ${err.message}`);

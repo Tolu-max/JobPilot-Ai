@@ -78,6 +78,13 @@ export class BruntWorkScraper extends BaseScraper {
 
     const hasCursor = Boolean(String(this.siteConfig.lastSeenJobUrl || '').trim());
     const cursorLinks = hasCursor ? unseenLinks : [];
+    const allowRescan = Boolean(
+      this.config.rescanRecentJobs ||
+      this.siteConfig.rescanRecentJobs ||
+      this.config.reprocessNonApplied ||
+      this.config.reprocess ||
+      process.env.REPROCESS_NON_APPLIED === 'true'
+    );
 
     // Prioritize truly unseen links from an explicit cursor, then unprocessed backlog links (not yet seen in job store), then fresh slice
     let candidateLinks;
@@ -85,7 +92,7 @@ export class BruntWorkScraper extends BaseScraper {
       candidateLinks = cursorLinks;
     } else if (unprocessedLinks.length > 0) {
       candidateLinks = unprocessedLinks;
-    } else if (knownUrls.size === 0) {
+    } else if (knownUrls.size === 0 || allowRescan) {
       candidateLinks = jobLinks;
     } else {
       candidateLinks = [];

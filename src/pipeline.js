@@ -132,6 +132,7 @@ export function isManualApplyApproval(record = {}) {
 
 export function getAiConsiderationFloor(config = {}) {
   if (Number.isFinite(config?.aiConsiderationFloor)) return config.aiConsiderationFloor;
+  if (Number.isFinite(config?.minReviewScore)) return config.minReviewScore;
   return 70;
 }
 
@@ -499,12 +500,15 @@ export async function runJobHunt(config, options = {}) {
   }
 
   const existingJobStore = await loadJobStore(config).catch(() => ({ jobs: [] }));
+  const shouldFilterAll = !options.reprocess && !options.reprocessNonApplied && config.reprocessNonApplied !== true && process.env.REPROCESS_NON_APPLIED !== 'true';
   config.knownJobUrls = new Set(
-    (existingJobStore.jobs || []).flatMap((j) => {
-      const u1 = String(j.job_url || '').trim();
-      const u2 = String(j.applicationUrl || '').trim();
-      return [u1, u2].filter(Boolean);
-    })
+    (existingJobStore.jobs || [])
+      .filter((j) => shouldFilterAll || j.status === 'applied' || j.status === 'hired')
+      .flatMap((j) => {
+        const u1 = String(j.job_url || '').trim();
+        const u2 = String(j.applicationUrl || '').trim();
+        return [u1, u2].filter(Boolean);
+      })
   );
 
   const scrapeResult = await withStartupTimeout(
