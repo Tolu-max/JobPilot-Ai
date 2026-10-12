@@ -47,8 +47,7 @@ The hosted web/dashboard must not collect or store by default:
 ## Scoring & Review Threshold Policy
 
 - **BruntWork Thresholds**:
-  - Auto-apply score threshold is **60+** (roles scoring 60+ auto-apply directly).
-  - Review score range is **50–59** (roles scoring 50–59 are routed to Telegram review).
+  - Auto-apply score threshold is **50+** (roles scoring 50+ auto-apply directly).
   - Roles scoring below 50 are ignored.
 
 ## Current Architecture

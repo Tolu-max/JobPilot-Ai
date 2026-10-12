@@ -606,7 +606,7 @@ export async function runJobHunt(config, options = {}) {
     const isHardExcluded = local?.cluster?.tier === 'HARD_EXCLUSION' ||
       (optimizer.risk_flags || []).some((f) => f.severity === 'high');
     const isBruntwork = String(job.source_site || job.source || '').toLowerCase() === 'bruntwork';
-    const effectiveThreshold = isBruntwork ? Math.min(autoApplyThreshold, 60) : autoApplyThreshold;
+    const effectiveThreshold = isBruntwork ? Math.min(autoApplyThreshold, 50) : autoApplyThreshold;
     const isProvenWinner = isBruntwork ||
       local?.cluster?.tier === 'PROVEN_WINNER' ||
       local?.recommendation === 'auto_apply' ||

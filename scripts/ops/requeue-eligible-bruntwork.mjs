@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 
-console.log('[requeue-bruntwork] Promoting eligible BruntWork jobs (score >= 60) to pending_apply...');
+console.log('[requeue-bruntwork] Promoting eligible BruntWork jobs (score >= 50) to pending_apply...');
 
 const profilesDirs = ['/app/data/profiles', './profiles'];
 let profilesDir = null;
@@ -57,7 +57,7 @@ if (profilesDir) {
           const isExcluded = exclusions.some(ex => title.includes(ex));
           if (isExcluded) continue;
 
-          if (score >= 60) {
+          if (score >= 50) {
             console.log(`[requeue-bruntwork] Queuing BruntWork role for ${prof}: "${j.title}" (score: ${score}, previous status: ${j.status})`);
             j.status = 'pending_apply';
             j.acceptedViaTelegram = true;
@@ -67,13 +67,6 @@ if (profilesDir) {
             delete j.reason;
             changed = true;
             promotedTotal++;
-          } else if (score >= 50 && j.status === 'ignored') {
-            console.log(`[requeue-bruntwork] Routing BruntWork review role for ${prof}: "${j.title}" (score: ${score})`);
-            j.status = 'reviewed';
-            j.decision = 'review';
-            j.terminal = false;
-            delete j.reason;
-            changed = true;
           }
 
           if (!j.applicationUrl && j.job_url) {
@@ -112,7 +105,7 @@ if (dbPath) {
       UPDATE job_applications
       SET status = 'pending_apply'
       WHERE source_site = 'bruntwork'
-        AND score >= 60
+        AND score >= 50
         AND status NOT IN ('applied', 'hired')
     `).run();
     console.log(`[requeue-bruntwork] Updated ${info.changes} row(s) in ${dbPath}`);
